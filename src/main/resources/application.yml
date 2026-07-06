@@ -1,0 +1,52 @@
+spring:
+  application:
+    name: pivot-agilite-backend
+
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/pivot}
+    username: ${SPRING_DATASOURCE_USERNAME:pivot}
+    password: ${SPRING_DATASOURCE_PASSWORD:pivot}
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: none
+    open-in-view: false
+    properties:
+      hibernate:
+        default_schema: agilite
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+    baseline-version: 0
+    schemas: agilite
+    default-schema: agilite
+
+  data:
+    redis:
+      # Valeurs par défaut : overridées via SPRING_DATA_REDIS_HOST / SPRING_DATA_REDIS_PORT
+      # par le relaxed binding Spring Boot (Spring Boot 4.x, pas de placeholder ${...} nécessaire).
+      host: localhost
+      port: 6379
+
+server:
+  port: ${SERVER_PORT:8082}
+  servlet:
+    context-path: /api/agilite
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      show-details: when_authorized
+
+logging:
+  level:
+    fr.pivot: ${LOG_LEVEL_PIVOT:INFO}
+    org.springframework.web: ${LOG_LEVEL_WEB:WARN}
+    org.flywaydb: ${LOG_LEVEL_FLYWAY:WARN}
