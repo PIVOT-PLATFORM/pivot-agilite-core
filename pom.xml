@@ -57,6 +57,21 @@
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-web</artifactId>
 		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-websocket</artifactId>
+		</dependency>
+		<!--
+		  EN07.3 — required for enableStompBrokerRelay(): StompBrokerRelayMessageHandler uses
+		  Reactor Netty for the TCP connection to the external STOMP broker (ActiveMQ).
+		  spring-boot-starter-websocket alone does NOT pull this in — without it, relay
+		  startup fails with ClassNotFoundException on reactor.netty.* at runtime. Version
+		  managed by the Spring Boot BOM (spring-boot-starter-parent), no explicit <version>.
+		-->
+		<dependency>
+			<groupId>io.projectreactor.netty</groupId>
+			<artifactId>reactor-netty</artifactId>
+		</dependency>
 		<!--
 		  Spring Boot 4 moved FlywayAutoConfiguration out of spring-boot-autoconfigure
 		  into the dedicated spring-boot-flyway module. flyway-core alone provides the
