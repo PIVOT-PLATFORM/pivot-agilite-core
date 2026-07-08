@@ -50,3 +50,10 @@ logging:
     fr.pivot: ${LOG_LEVEL_PIVOT:INFO}
     org.springframework.web: ${LOG_LEVEL_WEB:WARN}
     org.flywaydb: ${LOG_LEVEL_FLYWAY:WARN}
+
+pivot:
+  activemq:
+    # EN07.3 — shared ActiveMQ broker (KahaDB persistence, DLQ.agilite), owned/configured by
+    # pivot-core. Defaults match the Docker Compose service name/port (dev + prod).
+    relay-host: ${PIVOT_ACTIVEMQ_RELAY_HOST:activemq}
+    relay-port: ${PIVOT_ACTIVEMQ_RELAY_PORT:61613}
