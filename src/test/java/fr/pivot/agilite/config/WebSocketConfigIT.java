@@ -24,7 +24,10 @@ import static org.assertj.core.api.Assertions.assertThat;
  *
  * <p>Only {@link WebSocketConfig} is loaded (no {@code @SpringBootApplication} component scan)
  * — this relay has no dependency on the datasource/Redis/Flyway infrastructure the full
- * application context would otherwise require, so this stays fast and focused.
+ * application context would otherwise require, so this stays fast and focused. This requires
+ * {@link WebSocketConfig#registerStompEndpoints} to register at least one real endpoint (see
+ * its class JavaDoc) — a slice loaded with zero endpoints was verified to fail with
+ * {@code IllegalStateException: No handlers}.
  *
  * <p>{@link BrokerAvailabilityEvent} is the idiomatic Spring signal for STOMP broker relay
  * connectivity: it is published {@code true} once the relay's "system" TCP connection to the
@@ -35,7 +38,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 @Testcontainers
 @SpringBootTest(
         classes = {WebSocketConfig.class, WebSocketConfigIT.BrokerAvailabilityCaptureConfig.class},
-        webEnvironment = SpringBootTest.WebEnvironment.NONE)
+        webEnvironment = SpringBootTest.WebEnvironment.NONE,
+        properties = "pivot.cors.allowed-origins=http://localhost:4200")
 class WebSocketConfigIT {
 
     @Container

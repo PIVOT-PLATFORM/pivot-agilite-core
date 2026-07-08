@@ -54,6 +54,11 @@ logging:
 pivot:
   activemq:
     # EN07.3 — shared ActiveMQ broker (KahaDB persistence, DLQ.agilite), owned/configured by
-    # pivot-core. Defaults match the Docker Compose service name/port (dev + prod).
+    # pivot-core. Default host/port match its Docker Compose service (dev + prod) — see
+    # WebSocketConfig for the relay itself.
     relay-host: ${PIVOT_ACTIVEMQ_RELAY_HOST:activemq}
     relay-port: ${PIVOT_ACTIVEMQ_RELAY_PORT:61613}
+  cors:
+    # WebSocket handshake origin (EN07.3 WebSocketConfig) — no REST controller exists yet in
+    # this module, so this is currently only consumed by the WS endpoint.
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:4200}
