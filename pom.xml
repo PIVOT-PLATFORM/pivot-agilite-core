@@ -130,6 +130,23 @@
 				</configuration>
 			</plugin>
 
+			<!-- EN07.3 — surefire's default include patterns exclude *IT.java, so
+			     WebSocketConfigIT (Testcontainers) silently never ran during mvn test/verify
+			     without this — discovered via a real CI coverage-check failure (the new
+			     WebSocketConfig class was only ever exercised by the unit test). Matches the
+			     pattern already used in pivot-collaboratif-core. -->
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-surefire-plugin</artifactId>
+				<configuration>
+					<includes>
+						<include>**/*Test.java</include>
+						<include>**/*Tests.java</include>
+						<include>**/*IT.java</include>
+					</includes>
+				</configuration>
+			</plugin>
+
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-checkstyle-plugin</artifactId>
