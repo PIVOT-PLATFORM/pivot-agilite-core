@@ -26,6 +26,11 @@
 		<!-- JaCoCo 0.8.13 + SpotBugs ASM 9.7 support class 68 max; revert when tools add Java 25 support -->
 		<maven.compiler.release>24</maven.compiler.release>
 		<testcontainers.version>1.21.4</testcontainers.version>
+		<!-- CVE-2026-10532 (logback-core HardenedObjectInputStream deserialization bypass, LOW
+		     severity) — spring-boot-starter-parent:4.1.0 manages logback-core/logback-classic
+		     at 1.5.34; overridden here to the fixed 1.5.35 (Trivy container gate, Docker preview
+		     workflow). Revert once a spring-boot-starter-parent release manages 1.5.35+ itself. -->
+		<logback.version>1.5.35</logback.version>
 	</properties>
 
 	<dependencyManagement>
