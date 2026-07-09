@@ -55,7 +55,12 @@ pivot:
   activemq:
     # EN07.3 — shared ActiveMQ broker (KahaDB persistence, DLQ.agilite), owned/configured by
     # pivot-core. Default host/port match its Docker Compose service (dev + prod) — see
-    # WebSocketConfig for the relay itself.
+    # WebSocketConfig for the relay itself. relay-enabled is overridden to false in
+    # application-test.yml — see WebSocketConfig#configureMessageBroker JavaDoc (EN09.1: a
+    # second, simultaneous SimpleBroker registration for poker room traffic makes an
+    # unreachable relay target unsafe to leave enabled in tests that don't provide a real
+    # broker).
+    relay-enabled: ${PIVOT_ACTIVEMQ_RELAY_ENABLED:true}
     relay-host: ${PIVOT_ACTIVEMQ_RELAY_HOST:activemq}
     relay-port: ${PIVOT_ACTIVEMQ_RELAY_PORT:61613}
   cors:
