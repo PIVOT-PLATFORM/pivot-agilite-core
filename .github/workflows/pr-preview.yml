@@ -42,7 +42,7 @@ jobs:
       - name: PITest — mutation coverage
         continue-on-error: true
         env:
-          # US20.1.1 — see ci.yml's "Compile + Checkstyle + SpotBugs" step for why this is needed.
+          # See ci.yml's "Compile + Checkstyle + SpotBugs" step for why this is needed.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: mvn --no-transfer-progress test-compile pitest:mutationCoverage -Pmutation -Dmaven.compiler.release=24
 
