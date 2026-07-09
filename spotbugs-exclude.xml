@@ -11,9 +11,19 @@
           - Spring components (services, controllers, filters, config) store
             constructor-injected singleton beans. These are container-managed, not
             externally-mutable state — copying them is meaningless.
-        Intentional design decisions, not bugs. No packages listed yet — bootstrap only,
-        add module packages here (e.g. fr.pivot.agilite.*.entity/service/controller) as
-        real feature code lands.
+        Intentional design decisions, not bugs.
     -->
+    <Match>
+        <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
+        <Or>
+            <!-- EN09.1 — WebSocket STOMP room isolation (planning poker): RoomAccessGrantService
+                 and PokerChannelInterceptor store constructor-injected singleton beans
+                 (StringRedisTemplate, MeterRegistry, WsSessionRegistry). -->
+            <Package name="fr.pivot.agilite.poker.ws"/>
+            <!-- EN09.1 — shared WebSocket connection plumbing: WsSessionTrackingHandlerDecoratorFactory
+                 stores a constructor-injected singleton bean (WsSessionRegistry). -->
+            <Package name="fr.pivot.agilite.ws"/>
+        </Or>
+    </Match>
 
 </FindBugsFilter>
