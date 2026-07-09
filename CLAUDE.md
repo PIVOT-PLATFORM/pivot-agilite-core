@@ -158,7 +158,7 @@ réponse.
 |-------|---------|
 | Item Type | Epic / Feature / Enabler / US |
 | Parent | clé du parent (ex. `E01`, `F01.1`) |
-| Stage | Backlog / Ready / In progress / Review / Done |
+| Stage | ⬜ (pas encore terminé) / ✅ (Done — recette mainteneur). États intermédiaires internes, non persistés → pivot-docs/docs/backlog/README.md §2/§5 |
 | Priority | Critical / High / Medium / Low |
 | Module | core / auth / admin / oidc / pilotage / **agilite** / collaboratif |
 | Phase | Socle / v1-enterprise / phase-3 |
@@ -261,7 +261,7 @@ ou hors sprint (`fix/`, `refactor/`, `chore/`, `docs/`) — **sans exception** :
    - **Convergence** — Gate 4 = 100/100 (ou convergence confirmée sans finding restant) ET CI verte → sortir
 3. Gate 4 = 100/100 (ou convergence confirmée sans finding restant) :
    - Sortir la PR du mode draft (`gh pr ready`)
-   - `Stage: Review` dans frontmatter US + `sprints/sprint-{N}.md` (backlog pivot-docs sur la branche courante — pas de branche docs séparée)
+   - État interne Review (Stage frontmatter reste ⬜) + mise à jour de `sprints/sprint-{N}.md` (backlog pivot-docs sur la branche courante — pas de branche docs séparée)
    - **Gate 5** — générer/mettre à jour la spec fonctionnelle et technique figée `pivot-docs/docs/specs/{EPIC}/{us-id}-{slug}.md` (branche/PR `pivot-docs` dédiée — jamais de commit cross-repo)
    - Signal mainteneur
 4. Blocage 20 boucles → Breaking Point 2
@@ -363,7 +363,7 @@ dossier `gates/`). Le statut vit dans le champ **Stage** du frontmatter US (pivo
 
 | Gate | Moment | Seuils |
 |------|--------|--------|
-| **1 — READINESS** | Avant implémentation | PO Agent self-challenge · = 100 → Stage: Ready → procéder · < 100 → PO Agent réécrit ACs |
+| **1 — READINESS** | Avant implémentation | PO Agent self-challenge · = 100 → état interne Ready → procéder (Stage frontmatter reste ⬜) · < 100 → PO Agent réécrit ACs |
 | **2 — COVERAGE** | Par commit | ≥ 85 → continuer · 70–84 → compléter tests · < 70 → stop |
 | **3 — QUALITY** | Après CI verte | Hard blocks : secret Gitleaks, label `security`/`breaking-change`, modif contrat module |
 | **4 — MERGE CONFIDENCE** | Avant merge | = 100/100 → sortie du mode draft (merge autonome) · 60–99 → merge documenté · < 60 → Breaking Point 2 |
