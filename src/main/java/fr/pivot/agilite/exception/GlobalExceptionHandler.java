@@ -1,5 +1,6 @@
 package fr.pivot.agilite.exception;
 
+import fr.pivot.agilite.poker.exception.RoomNotFoundException;
 import jakarta.validation.ConstraintViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
@@ -15,11 +16,28 @@ import java.util.Map;
  * <p>Handles retro-session domain exceptions ({@link RetroTeamNotFoundException}, {@link
  * RetroTeamAccessDeniedException}, {@link RetroSessionNotFoundException}, {@link
  * RetroJoinCodeNotFoundException}, {@link RetroSessionExpiredException}, {@link
- * InvalidRetroFormatException}), as well as Spring MVC/Bean Validation failures ({@link
+ * InvalidRetroFormatException}), planning poker room lookup failures (US09.1.1, {@link
+ * RoomNotFoundException}), as well as Spring MVC/Bean Validation failures ({@link
  * MethodArgumentNotValidException}, {@link ConstraintViolationException}).
  */
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
+    /**
+     * Returns HTTP 404 when a planning poker room is not found, or belongs to another tenant
+     * (US09.1.1) — both cases are deliberately indistinguishable to avoid confirming
+     * cross-tenant existence.
+     *
+     * @param ex the thrown exception
+     * @return a 404 problem detail
+     */
+    @ExceptionHandler(RoomNotFoundException.class)
+    public ProblemDetail handleRoomNotFound(final RoomNotFoundException ex) {
+        ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.NOT_FOUND);
+        problem.setTitle("Room not found");
+        problem.setDetail(ex.getMessage());
+        return problem;
+    }
 
     /**
      * Returns HTTP 404 when a team referenced in a retro session request does not exist, or

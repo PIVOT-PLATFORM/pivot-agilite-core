@@ -45,3 +45,20 @@ CREATE TABLE IF NOT EXISTS agilite.retro_cards (
     CONSTRAINT chk_retro_cards_anonymous_no_author CHECK (NOT is_anonymous OR author_user_id IS NULL)
 );
 CREATE INDEX IF NOT EXISTS idx_retro_cards_session_id ON agilite.retro_cards(session_id);
+
+-- US09.1.1 — planning poker rooms. FK to public.tenants(id)/public.users(id) only — the sole
+-- cross-schema references this repo's CLAUDE.md allows (never another module schema).
+CREATE TABLE IF NOT EXISTS agilite.poker_rooms (
+    id                  BIGSERIAL PRIMARY KEY,
+    tenant_id           BIGINT NOT NULL REFERENCES public.tenants(id),
+    facilitator_user_id BIGINT NOT NULL REFERENCES public.users(id),
+    name                VARCHAR(120) NOT NULL,
+    invite_code         CHAR(6) NOT NULL UNIQUE,
+    -- Fixed to FIBONACCI in v1 (ADR-026 §2) — the CHECK constraint enforces this at the DB
+    -- layer too, not just at the API surface (no request field lets a caller override it).
+    sequence            VARCHAR(20) NOT NULL DEFAULT 'FIBONACCI' CHECK (sequence = 'FIBONACCI'),
+    active              BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at          TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_poker_rooms_tenant_id ON agilite.poker_rooms (tenant_id);
