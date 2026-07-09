@@ -1,5 +1,7 @@
 package fr.pivot.agilite.poker.exception;
 
+import java.util.UUID;
+
 /**
  * Thrown when a planning poker room cannot be found for the caller's tenant (US09.1.1) — either
  * because no room exists with the given id, or because it belongs to a different tenant. Both
@@ -16,7 +18,7 @@ public class RoomNotFoundException extends RuntimeException {
      *
      * @param roomId the room id that could not be found for the caller's tenant
      */
-    public RoomNotFoundException(final Long roomId) {
+    public RoomNotFoundException(final UUID roomId) {
         super("Room not found: " + roomId);
     }
 }

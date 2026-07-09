@@ -165,7 +165,7 @@ class PokerRoomControllerIT {
                 .andExpect(status().isCreated())
                 .andReturn();
         JsonNode body = objectMapper.readTree(result.getResponse().getContentAsString());
-        long id = body.get("id").asLong();
+        String id = body.get("id").asText();
 
         assertThat(body.get("wsTopic").asText()).isEqualTo("/topic/agilite/poker/" + id);
     }
@@ -297,7 +297,7 @@ class PokerRoomControllerIT {
      */
     @Test
     void findById_ownTenant_returnsRoom() throws Exception {
-        long roomId = createRoomFor(tokenA, "My Room");
+        String roomId = createRoomFor(tokenA, "My Room");
 
         mockMvc.perform(get(BASE_PATH + "/" + roomId)
                         .header("Authorization", "Bearer " + tokenA))
@@ -312,7 +312,7 @@ class PokerRoomControllerIT {
      */
     @Test
     void findById_crossTenant_returns404() throws Exception {
-        long roomId = createRoomFor(tokenA, "Tenant A Room");
+        String roomId = createRoomFor(tokenA, "Tenant A Room");
 
         mockMvc.perform(get(BASE_PATH + "/" + roomId)
                         .header("Authorization", "Bearer " + tokenB))
@@ -325,9 +325,21 @@ class PokerRoomControllerIT {
      */
     @Test
     void findById_nonExistentRoom_returns404() throws Exception {
-        mockMvc.perform(get(BASE_PATH + "/999999999")
+        mockMvc.perform(get(BASE_PATH + "/" + java.util.UUID.randomUUID())
                         .header("Authorization", "Bearer " + tokenA))
                 .andExpect(status().isNotFound());
+    }
+
+    /**
+     * Error case: given a syntactically invalid (non-UUID) room id, when GET
+     * /poker/rooms/{roomId} is called, then it returns HTTP 400 (Spring's path variable
+     * conversion failure), never a 500.
+     */
+    @Test
+    void findById_malformedRoomId_returns400() throws Exception {
+        mockMvc.perform(get(BASE_PATH + "/not-a-uuid")
+                        .header("Authorization", "Bearer " + tokenA))
+                .andExpect(status().isBadRequest());
     }
 
     /**
@@ -336,7 +348,7 @@ class PokerRoomControllerIT {
      */
     @Test
     void findById_missingAuthorization_returns401() throws Exception {
-        long roomId = createRoomFor(tokenA, "Room");
+        String roomId = createRoomFor(tokenA, "Room");
 
         mockMvc.perform(get(BASE_PATH + "/" + roomId))
                 .andExpect(status().isUnauthorized());
@@ -351,10 +363,10 @@ class PokerRoomControllerIT {
      *
      * @param token the caller's raw bearer token
      * @param name  the room name
-     * @return the created room's numeric id
+     * @return the created room's UUID id, as a string
      * @throws Exception if the HTTP request fails or the response status is not 201
      */
-    private long createRoomFor(final String token, final String name) throws Exception {
+    private String createRoomFor(final String token, final String name) throws Exception {
         MvcResult result = mockMvc.perform(post(BASE_PATH)
                         .contentType(MediaType.APPLICATION_JSON)
                         .header("Authorization", "Bearer " + token)
@@ -362,6 +374,6 @@ class PokerRoomControllerIT {
                 .andExpect(status().isCreated())
                 .andReturn();
         JsonNode body = objectMapper.readTree(result.getResponse().getContentAsString());
-        return body.get("id").asLong();
+        return body.get("id").asText();
     }
 }

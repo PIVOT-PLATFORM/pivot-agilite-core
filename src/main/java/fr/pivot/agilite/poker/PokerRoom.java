@@ -8,6 +8,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 
 import java.time.Instant;
+import java.util.UUID;
 
 /**
  * JPA entity backing a planning poker room (US09.1.1), table {@code agilite.poker_rooms}.
@@ -15,14 +16,22 @@ import java.time.Instant;
  * <p>Never exposed directly over the API — {@link PokerRoomController} always returns a {@code
  * RoomResponse} DTO built by {@link PokerRoomService}, per this repo's "no JPA entity in API
  * responses" standard.
+ *
+ * <p><strong>{@code UUID} primary key, not {@code BIGSERIAL}</strong> — matches
+ * {@code fr.pivot.agilite.retro.session.RetroSession} (US20.1.1) and {@code
+ * pivot-collaboratif-core}'s {@code Board}: room/session-like resources use {@code UUID} across
+ * this platform (unlike {@code public.tenants}/{@code public.users}, which stay {@code BIGSERIAL}
+ * — no UUID identity concept there). Required for interop with EN09.1's WebSocket isolation
+ * layer: {@link fr.pivot.agilite.poker.ws.PokerRoomDestinations#roomTopic(UUID)} and {@link
+ * fr.pivot.agilite.poker.ws.RoomAccessGrantService} are both keyed on {@code UUID roomId}.
  */
 @Entity
 @Table(name = "poker_rooms", schema = "agilite")
 public class PokerRoom {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
+    @GeneratedValue(strategy = GenerationType.UUID)
+    private UUID id;
 
     @Column(name = "tenant_id", nullable = false)
     private Long tenantId;
@@ -83,7 +92,7 @@ public class PokerRoom {
     }
 
     /** @return database primary key */
-    public Long getId() {
+    public UUID getId() {
         return id;
     }
 

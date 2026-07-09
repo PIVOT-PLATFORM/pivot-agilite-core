@@ -13,6 +13,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.UUID;
+
 /**
  * REST controller exposing planning poker room operations under {@code /poker/rooms} (US09.1.1).
  *
@@ -63,7 +65,7 @@ public class PokerRoomController {
      */
     @GetMapping("/{roomId}")
     public RoomResponse findById(
-            @PathVariable final Long roomId,
+            @PathVariable final UUID roomId,
             final RequestPrincipal principal) {
         return service.findById(roomId, principal.tenantId());
     }

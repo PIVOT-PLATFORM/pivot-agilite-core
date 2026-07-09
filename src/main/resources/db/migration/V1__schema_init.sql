@@ -47,9 +47,11 @@ CREATE TABLE IF NOT EXISTS agilite.retro_cards (
 CREATE INDEX IF NOT EXISTS idx_retro_cards_session_id ON agilite.retro_cards(session_id);
 
 -- US09.1.1 — planning poker rooms. FK to public.tenants(id)/public.users(id) only — the sole
--- cross-schema references this repo's CLAUDE.md allows (never another module schema).
+-- cross-schema references this repo's CLAUDE.md allows (never another module schema). UUID
+-- primary key (not BIGSERIAL) to match agilite.retro_sessions and interop with EN09.1's
+-- WebSocket isolation layer (PokerRoomDestinations/RoomAccessGrantService, both keyed on UUID).
 CREATE TABLE IF NOT EXISTS agilite.poker_rooms (
-    id                  BIGSERIAL PRIMARY KEY,
+    id                  UUID NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
     tenant_id           BIGINT NOT NULL REFERENCES public.tenants(id),
     facilitator_user_id BIGINT NOT NULL REFERENCES public.users(id),
     name                VARCHAR(120) NOT NULL,

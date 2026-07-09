@@ -2,16 +2,17 @@ package fr.pivot.agilite.poker.dto;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.UUID;
 
 /**
  * API response shape for a planning poker room (US09.1.1), returned by both {@code POST
  * /api/agilite/poker/rooms} and {@code GET /api/agilite/poker/rooms/{roomId}}.
  *
- * <p>{@code wsTopic} follows the STOMP destination convention already fixed by ADR-026 §2 for
- * US09.1.2 ({@code /topic/agilite/poker/{roomId}}) — the frontend subscribes to this exact
- * destination once it joins the room. To be reconfirmed against EN09.1 (WebSocket room
- * isolation, developed in parallel in this same repo) once merged, in case its isolation
- * mechanism changes the destination naming convention.
+ * <p>{@code id} is a {@code UUID}, not a {@code BIGSERIAL} — required for interop with EN09.1's
+ * WebSocket isolation layer ({@code PokerRoomDestinations}/{@code RoomAccessGrantService}, both
+ * keyed on {@code UUID roomId}). {@code wsTopic} is built via {@code
+ * PokerRoomDestinations#roomTopic(UUID)} — the single source of truth for this destination
+ * naming, already fixed by ADR-026 §2 for US09.1.2 ({@code /topic/agilite/poker/{roomId}}).
  *
  * @param id                room primary key
  * @param name              room display name
@@ -25,7 +26,7 @@ import java.util.List;
  * @param wsTopic           the STOMP destination this room's participants subscribe to
  */
 public record RoomResponse(
-        Long id,
+        UUID id,
         String name,
         String inviteCode,
         String sequence,

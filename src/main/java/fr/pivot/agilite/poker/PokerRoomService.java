@@ -2,6 +2,7 @@ package fr.pivot.agilite.poker;
 
 import fr.pivot.agilite.poker.dto.RoomResponse;
 import fr.pivot.agilite.poker.exception.RoomNotFoundException;
+import fr.pivot.agilite.poker.ws.PokerRoomDestinations;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -9,15 +10,13 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.UUID;
 
 /**
  * Business logic for planning poker room creation and lookup (US09.1.1).
  */
 @Service
 public class PokerRoomService {
-
-    /** STOMP destination prefix a room's participants subscribe to (ADR-026 §2, US09.1.2). */
-    private static final String WS_TOPIC_PREFIX = "/topic/agilite/poker/";
 
     /**
      * Maximum attempts to find a free invite code before giving up — collision is
@@ -81,7 +80,7 @@ public class PokerRoomService {
      * @throws RoomNotFoundException if no room with this id exists for this tenant
      */
     @Transactional(readOnly = true)
-    public RoomResponse findById(final Long roomId, final Long tenantId) {
+    public RoomResponse findById(final UUID roomId, final Long tenantId) {
         final PokerRoom room = repository.findByIdAndTenantId(roomId, tenantId)
                 .orElseThrow(() -> new RoomNotFoundException(roomId));
         return toResponse(room);
@@ -123,6 +122,6 @@ public class PokerRoomService {
                 room.isActive(),
                 room.getCreatedAt(),
                 room.getExpiresAt(),
-                WS_TOPIC_PREFIX + room.getId());
+                PokerRoomDestinations.roomTopic(room.getId()));
     }
 }

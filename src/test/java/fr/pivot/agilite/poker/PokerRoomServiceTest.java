@@ -12,6 +12,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.Optional;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -29,6 +30,8 @@ import static org.mockito.Mockito.when;
 class PokerRoomServiceTest {
 
     private static final Instant FIXED_NOW = Instant.parse("2026-07-10T10:00:00Z");
+    private static final UUID ROOM_ID = UUID.fromString("11111111-1111-1111-1111-111111111111");
+    private static final UUID OTHER_ROOM_ID = UUID.fromString("22222222-2222-2222-2222-222222222222");
 
     @Mock
     private PokerRoomRepository repository;
@@ -51,7 +54,7 @@ class PokerRoomServiceTest {
         when(repository.existsByInviteCode(anyString())).thenReturn(false);
         when(repository.save(any(PokerRoom.class))).thenAnswer(invocation -> {
             PokerRoom room = invocation.getArgument(0);
-            setId(room, 42L);
+            setId(room, ROOM_ID);
             return room;
         });
 
@@ -65,7 +68,7 @@ class PokerRoomServiceTest {
         assertThat(response.sequence()).isEqualTo(PokerCardDeck.SEQUENCE_FIBONACCI);
         assertThat(response.cardValues()).isEqualTo(PokerCardDeck.FIBONACCI_VALUES);
         assertThat(response.inviteCode()).hasSize(6);
-        assertThat(response.wsTopic()).isEqualTo("/topic/agilite/poker/42");
+        assertThat(response.wsTopic()).isEqualTo("/topic/agilite/poker/" + ROOM_ID);
     }
 
     /**
@@ -77,7 +80,7 @@ class PokerRoomServiceTest {
         when(repository.existsByInviteCode(anyString())).thenReturn(false);
         when(repository.save(any(PokerRoom.class))).thenAnswer(invocation -> {
             PokerRoom room = invocation.getArgument(0);
-            setId(room, 1L);
+            setId(room, ROOM_ID);
             return room;
         });
 
@@ -95,7 +98,7 @@ class PokerRoomServiceTest {
         when(repository.existsByInviteCode(anyString())).thenReturn(true, true, false);
         when(repository.save(any(PokerRoom.class))).thenAnswer(invocation -> {
             PokerRoom room = invocation.getArgument(0);
-            setId(room, 1L);
+            setId(room, ROOM_ID);
             return room;
         });
 
@@ -125,13 +128,13 @@ class PokerRoomServiceTest {
     @Test
     void findById_existingRoomInTenant_returnsResponse() {
         PokerRoom room = new PokerRoom(3L, 7L, "Room", "ABC234", FIXED_NOW, FIXED_NOW.plusSeconds(3600));
-        setId(room, 5L);
-        when(repository.findByIdAndTenantId(5L, 3L)).thenReturn(Optional.of(room));
+        setId(room, ROOM_ID);
+        when(repository.findByIdAndTenantId(ROOM_ID, 3L)).thenReturn(Optional.of(room));
 
-        RoomResponse response = service.findById(5L, 3L);
+        RoomResponse response = service.findById(ROOM_ID, 3L);
 
-        assertThat(response.id()).isEqualTo(5L);
-        assertThat(response.wsTopic()).isEqualTo("/topic/agilite/poker/5");
+        assertThat(response.id()).isEqualTo(ROOM_ID);
+        assertThat(response.wsTopic()).isEqualTo("/topic/agilite/poker/" + ROOM_ID);
     }
 
     /**
@@ -141,9 +144,9 @@ class PokerRoomServiceTest {
      */
     @Test
     void findById_notFoundForTenant_throwsRoomNotFoundException() {
-        when(repository.findByIdAndTenantId(eq(99L), eq(3L))).thenReturn(Optional.empty());
+        when(repository.findByIdAndTenantId(eq(OTHER_ROOM_ID), eq(3L))).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.findById(99L, 3L))
+        assertThatThrownBy(() -> service.findById(OTHER_ROOM_ID, 3L))
                 .isInstanceOf(RoomNotFoundException.class);
     }
 
@@ -156,15 +159,15 @@ class PokerRoomServiceTest {
     @Test
     void findById_crossTenantLookup_isScopedByTenantId() {
         PokerRoom roomForTenantA = new PokerRoom(1L, 1L, "Room", "ABC234", FIXED_NOW, FIXED_NOW.plusSeconds(3600));
-        setId(roomForTenantA, 10L);
-        when(repository.findByIdAndTenantId(10L, 1L)).thenReturn(Optional.of(roomForTenantA));
-        when(repository.findByIdAndTenantId(10L, 2L)).thenReturn(Optional.empty());
+        setId(roomForTenantA, ROOM_ID);
+        when(repository.findByIdAndTenantId(ROOM_ID, 1L)).thenReturn(Optional.of(roomForTenantA));
+        when(repository.findByIdAndTenantId(ROOM_ID, 2L)).thenReturn(Optional.empty());
 
-        assertThat(service.findById(10L, 1L).id()).isEqualTo(10L);
-        assertThatThrownBy(() -> service.findById(10L, 2L)).isInstanceOf(RoomNotFoundException.class);
+        assertThat(service.findById(ROOM_ID, 1L).id()).isEqualTo(ROOM_ID);
+        assertThatThrownBy(() -> service.findById(ROOM_ID, 2L)).isInstanceOf(RoomNotFoundException.class);
     }
 
-    private static void setId(final PokerRoom room, final long id) {
+    private static void setId(final PokerRoom room, final UUID id) {
         try {
             java.lang.reflect.Field field = PokerRoom.class.getDeclaredField("id");
             field.setAccessible(true);
