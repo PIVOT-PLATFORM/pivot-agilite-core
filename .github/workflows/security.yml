@@ -67,6 +67,9 @@ jobs:
           config-file: .github/codeql/config.yml
 
       - name: Build
+        env:
+          # US20.1.1 — see ci.yml's "Compile + Checkstyle + SpotBugs" step for why this is needed.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: mvn --no-transfer-progress compile -DskipTests
 
       - name: Perform CodeQL Analysis
