@@ -19,8 +19,10 @@ import java.util.Map;
  * RetroJoinCodeNotFoundException}, {@link RetroSessionExpiredException}, {@link
  * InvalidRetroFormatException}), planning poker room lookup failures (US09.1.1, {@link
  * RoomNotFoundException}) and join-by-code failures (US09.1.2, {@link
- * InviteCodeNotFoundException}), as well as Spring MVC/Bean Validation failures ({@link
- * MethodArgumentNotValidException}, {@link ConstraintViolationException}).
+ * InviteCodeNotFoundException}), wheel/team domain exceptions (US14.1.1, {@link
+ * WheelNotFoundException}, {@link TeamNotFoundException}, {@link WheelValidationException}), as
+ * well as Spring MVC/Bean Validation failures ({@link MethodArgumentNotValidException}, {@link
+ * ConstraintViolationException}).
  */
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -148,12 +150,59 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * Returns HTTP 404 when a wheel is not found, belongs to another tenant, or the caller is
+     * not a member of its team (US14.1.1).
+     *
+     * @param ex the thrown exception
+     * @return a 404 problem detail
+     */
+    @ExceptionHandler(WheelNotFoundException.class)
+    public ProblemDetail handleWheelNotFound(final WheelNotFoundException ex) {
+        ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.NOT_FOUND);
+        problem.setTitle("Wheel not found");
+        problem.setDetail(ex.getMessage());
+        return problem;
+    }
+
+    /**
+     * Returns HTTP 404 when a team is not found, belongs to another tenant, or the caller is
+     * not one of its members (US14.1.1).
+     *
+     * @param ex the thrown exception
+     * @return a 404 problem detail
+     */
+    @ExceptionHandler(TeamNotFoundException.class)
+    public ProblemDetail handleTeamNotFound(final TeamNotFoundException ex) {
+        ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.NOT_FOUND);
+        problem.setTitle("Team not found");
+        problem.setDetail(ex.getMessage());
+        return problem;
+    }
+
+    /**
+     * Returns HTTP 400 with a machine-readable {@code code} property for wheel entry business
+     * rule violations (duplicate entry, invalid team-member reference, malformed entry)
+     * (US14.1.1).
+     *
+     * @param ex the thrown exception
+     * @return a 400 problem detail with a {@code code} property
+     */
+    @ExceptionHandler(WheelValidationException.class)
+    public ProblemDetail handleWheelValidation(final WheelValidationException ex) {
+        ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.BAD_REQUEST);
+        problem.setTitle("Validation failed");
+        problem.setDetail(ex.getMessage());
+        problem.setProperties(Map.of("code", ex.getCode()));
+        return problem;
+    }
+
+    /**
      * Returns HTTP 400 with a machine-readable {@code code} property for Bean Validation
      * failures on request bodies.
      *
      * <p>The {@code code} value is extracted from the first field error's default message,
      * which is set to values such as {@code "INVALID_TITLE"} by the validation constraints on
-     * {@code CreateRetroSessionRequest}.
+     * request DTOs (e.g. {@code CreateRetroSessionRequest}, wheel request DTOs).
      *
      * @param ex the validation exception
      * @return a 400 problem detail with a {@code code} property
@@ -173,7 +222,8 @@ public class GlobalExceptionHandler {
     }
 
     /**
-     * Returns HTTP 400 for parameter constraint violations (e.g. path variable constraints).
+     * Returns HTTP 400 for parameter constraint violations (e.g. path variable constraints,
+     * missing/invalid {@code teamId} query parameter).
      *
      * @param ex the constraint violation exception
      * @return a 400 problem detail

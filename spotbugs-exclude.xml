@@ -23,9 +23,10 @@
             <!-- EN09.1 — shared WebSocket connection plumbing: WsSessionTrackingHandlerDecoratorFactory
                  stores a constructor-injected singleton bean (WsSessionRegistry). -->
             <Package name="fr.pivot.agilite.ws"/>
-            <!-- EN08.3 (US20.1.1) — auth EN08.3 pattern replicated from pivot-collaboratif-core:
-                 PlatformAccessToken/PlatformUser/PlatformTenant are read-only JPA mirrors of
-                 public.*; TokenValidationService/RequestPrincipalResolver/WebMvcConfig store
+            <!-- EN08.3 (US20.1.1/US09.1.1/US14.1.1) — auth EN08.3 pattern replicated from
+                 pivot-collaboratif-core: PlatformAccessToken/PlatformUser/PlatformTenant/
+                 PlatformTeam/PlatformTeamMember are read-only JPA mirrors of public.*;
+                 TokenValidationService/RequestPrincipalResolver/WebMvcConfig store
                  constructor-injected singleton beans (repositories, AuthenticatedPrincipalResolver). -->
             <Package name="fr.pivot.agilite.auth"/>
             <Package name="fr.pivot.agilite.auth.entity"/>
@@ -46,6 +47,17 @@
                  statically from the List<String> field type alone. -->
             <Package name="fr.pivot.agilite.poker"/>
             <Package name="fr.pivot.agilite.poker.dto"/>
+            <!-- US14.1.1 — Wheel/WheelEntry are JPA entities (mutable getters/setters required
+                 by Hibernate); Wheel.getEntries() deliberately returns the live, mutable
+                 collection (not a defensive copy) so WheelService can clear()/re-add onto it for
+                 the PUT full-replace semantics with orphanRemoval. WheelService/WheelController
+                 store constructor-injected singleton beans (repositories, TeamMembershipService). -->
+            <Package name="fr.pivot.agilite.wheel"/>
+            <Package name="fr.pivot.agilite.wheel.dto"/>
+            <!-- US14.1.1 — TeamMembershipService/TeamMembershipController store
+                 constructor-injected singleton beans (repositories). -->
+            <Package name="fr.pivot.agilite.team"/>
+            <Package name="fr.pivot.agilite.team.dto"/>
         </Or>
     </Match>
 
