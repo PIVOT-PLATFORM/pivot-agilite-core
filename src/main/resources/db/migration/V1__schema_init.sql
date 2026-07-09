@@ -64,3 +64,45 @@ CREATE TABLE IF NOT EXISTS agilite.poker_rooms (
     expires_at          TIMESTAMPTZ NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_poker_rooms_tenant_id ON agilite.poker_rooms (tenant_id);
+
+-- US14.1.1: wheel + wheel_entry (module La Roue)
+-- FK vers public.tenants/public.users : pas de ON DELETE CASCADE (jamais supprimes en dur,
+-- modele soft-delete/desactivation — meme convention que collaboratif.board).
+-- team_id : ON DELETE CASCADE, meme convention que public.team_members -> public.teams
+-- (pivot-core V1__schema_init.sql, fk_tm_team) : une equipe supprimee entraine ses roues.
+CREATE TABLE IF NOT EXISTS agilite.wheel (
+    id                  UUID         NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
+    tenant_id           BIGINT       NOT NULL REFERENCES public.tenants(id),
+    team_id             BIGINT       NOT NULL REFERENCES public.teams(id) ON DELETE CASCADE,
+    name                VARCHAR(100) NOT NULL,
+    last_drawn_entry_id UUID,
+    created_by          BIGINT       NOT NULL REFERENCES public.users(id),
+    created_at          TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    updated_at          TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_wheel_tenant_id ON agilite.wheel(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_wheel_team_id   ON agilite.wheel(team_id);
+
+-- lastDrawnEntryId: forward-looking anti-repeat marker for US14.2.1's weighted draw — always
+-- NULL until that US lands, never written by anything in this migration/feature.
+CREATE TABLE IF NOT EXISTS agilite.wheel_entry (
+    id             UUID         NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
+    wheel_id       UUID         NOT NULL REFERENCES agilite.wheel(id) ON DELETE CASCADE,
+    entry_type     VARCHAR(20)  NOT NULL,
+    team_member_id BIGINT       REFERENCES public.team_members(id) ON DELETE SET NULL,
+    label          VARCHAR(150) NOT NULL,
+    weight         SMALLINT     NOT NULL DEFAULT 1,
+    created_at     TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    updated_at     TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    CONSTRAINT chk_wheel_entry_type   CHECK (entry_type IN ('TEAM_MEMBER', 'FREE_TEXT')),
+    CONSTRAINT chk_wheel_entry_weight CHECK (weight BETWEEN 1 AND 10)
+);
+CREATE INDEX IF NOT EXISTS idx_wheel_entry_wheel_id ON agilite.wheel_entry(wheel_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_wheel_entry_team_member
+    ON agilite.wheel_entry(wheel_id, team_member_id) WHERE team_member_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_wheel_entry_free_text_label
+    ON agilite.wheel_entry(wheel_id, lower(label)) WHERE entry_type = 'FREE_TEXT';
+
+ALTER TABLE agilite.wheel
+    ADD CONSTRAINT fk_wheel_last_drawn_entry
+    FOREIGN KEY (last_drawn_entry_id) REFERENCES agilite.wheel_entry(id) ON DELETE SET NULL;
