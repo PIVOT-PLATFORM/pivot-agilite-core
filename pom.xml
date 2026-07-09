@@ -46,6 +46,20 @@
 	</dependencyManagement>
 
 	<dependencies>
+		<!--
+		  US20.1.1 — first consumer of pivot-core-starter in this repo. Pinned explicitly to a
+		  real, published version (never guessed, per CLAUDE.md) — 0.28.0 is the version that
+		  marks spring-boot-starter-security/spring-security-oauth2-jose optional=true
+		  (pivot-core#211), fixing the transitive HTTP-Basic auto-config trap that forced
+		  pivot-collaboratif-core to add its own permit-all SecurityConfig before that fix
+		  existed. Verified empirically via `mvn dependency:tree` (see PR description) whether a
+		  SecurityConfig is still required here.
+		-->
+		<dependency>
+			<groupId>fr.pivot</groupId>
+			<artifactId>pivot-core-starter</artifactId>
+			<version>0.28.0</version>
+		</dependency>
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-actuator</artifactId>
@@ -57,6 +71,11 @@
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-data-redis</artifactId>
+		</dependency>
+		<!-- US20.1.1 — Bean Validation (@NotBlank/@Size/@Positive/@NotNull) on request DTOs. -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-validation</artifactId>
 		</dependency>
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
@@ -118,6 +137,18 @@
 			<scope>test</scope>
 		</dependency>
 	</dependencies>
+
+	<!-- Résolution de fr.pivot:pivot-core-starter (GitHub Packages du repo pivot-core, distinct
+	     du repo de publication de ce module — voir distributionManagement plus bas). Credentials
+	     résolues via le serveur Maven "pivot-core-packages" (.github/actions/setup-java), même
+	     convention que pivot-collaboratif-core. -->
+	<repositories>
+		<repository>
+			<id>pivot-core-packages</id>
+			<name>GitHub Packages — pivot-core</name>
+			<url>https://maven.pkg.github.com/PIVOT-PLATFORM/pivot-core</url>
+		</repository>
+	</repositories>
 
 	<build>
 		<plugins>
