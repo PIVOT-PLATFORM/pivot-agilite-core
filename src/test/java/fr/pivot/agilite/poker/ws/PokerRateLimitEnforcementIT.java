@@ -1,5 +1,6 @@
 package fr.pivot.agilite.poker.ws;
 
+import fr.pivot.agilite.testsupport.PlatformAuthTestSupport;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -58,17 +59,25 @@ class PokerRateLimitEnforcementIT {
             new GenericContainer<>("redis:7-alpine").withExposedPorts(6379);
 
     /**
-     * Supplies Testcontainer-derived connection properties to the Spring context.
+     * Supplies Testcontainer-derived connection properties to the Spring context, and seeds the
+     * {@code public} schema (owned by {@code pivot-core}, not by this repo's own Flyway) before
+     * Flyway runs — required since US20.1.1 added FK references from
+     * {@code agilite.retro_sessions} into {@code public.tenants}/{@code public.teams}/
+     * {@code public.users}, which now makes the {@code agilite} migration fail on any fresh
+     * Testcontainers Postgres that doesn't already have those tables (this class's own poker/ws
+     * feature never touches them directly, but the shared migration file does).
      *
      * @param registry the dynamic property registry
      */
     @DynamicPropertySource
-    static void overrideProperties(final DynamicPropertyRegistry registry) {
+    static void overrideProperties(final DynamicPropertyRegistry registry) throws Exception {
         registry.add("spring.datasource.url", postgres::getJdbcUrl);
         registry.add("spring.datasource.username", postgres::getUsername);
         registry.add("spring.datasource.password", postgres::getPassword);
         registry.add("spring.data.redis.host", redis::getHost);
         registry.add("spring.data.redis.port", () -> redis.getMappedPort(6379));
+        PlatformAuthTestSupport.createPublicSchema(
+                postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
     }
 
     @LocalServerPort

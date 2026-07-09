@@ -23,6 +23,21 @@
             <!-- EN09.1 — shared WebSocket connection plumbing: WsSessionTrackingHandlerDecoratorFactory
                  stores a constructor-injected singleton bean (WsSessionRegistry). -->
             <Package name="fr.pivot.agilite.ws"/>
+            <!-- EN08.3 (US20.1.1) — auth EN08.3 pattern replicated from pivot-collaboratif-core:
+                 PlatformAccessToken/PlatformUser/PlatformTenant are read-only JPA mirrors of
+                 public.*; TokenValidationService/RequestPrincipalResolver/WebMvcConfig store
+                 constructor-injected singleton beans (repositories, AuthenticatedPrincipalResolver). -->
+            <Package name="fr.pivot.agilite.auth"/>
+            <Package name="fr.pivot.agilite.auth.entity"/>
+            <Package name="fr.pivot.agilite.context"/>
+            <Package name="fr.pivot.agilite.config"/>
+            <Package name="fr.pivot.agilite.exception"/>
+            <!-- US20.1.1 — RetroSession is a JPA entity (mutable getters/setters required by
+                 Hibernate); RetroSessionService/RetroSessionController/JoinCodeGenerator store
+                 constructor-injected singleton beans (repositories, TeamRepository,
+                 TeamMemberRepository, JoinCodeGenerator). -->
+            <Package name="fr.pivot.agilite.retro.session"/>
+            <Package name="fr.pivot.agilite.retro.session.dto"/>
         </Or>
     </Match>
 

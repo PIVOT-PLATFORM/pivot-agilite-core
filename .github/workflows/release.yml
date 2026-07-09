@@ -159,12 +159,19 @@ jobs:
 
       - name: Build & load Docker image (amd64)
         id: build-docker
+        env:
+          # US20.1.1 : credentials GitHub Packages pour fr.pivot:pivot-core-starter, passées au
+          # build Docker via secrets BuildKit (jamais en --build-arg, jamais dans les layers).
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}/pivot-agilite-core"
           echo "IMAGE_REF=${IMAGE}:${GITHUB_SHA}" >> "$GITHUB_ENV"
           echo "IMAGE_LATEST=${IMAGE}:latest" >> "$GITHUB_ENV"
           echo "image_name=${IMAGE}" >> "$GITHUB_OUTPUT"
           docker buildx build --platform linux/amd64 --load \
+            --secret id=github_actor,env=GITHUB_ACTOR \
+            --secret id=github_token,env=GITHUB_TOKEN \
             -t "${IMAGE}:${GITHUB_SHA}" \
             -t "${IMAGE}:latest" \
             .

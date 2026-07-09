@@ -8,9 +8,8 @@ spring:
     hibernate:
       ddl-auto: none
     open-in-view: false
-    properties:
-      hibernate:
-        default_schema: agilite
+    # See application.yml for why there is no blanket hibernate.default_schema here (US20.1.1 —
+    # first consumer of fr.pivot.core.team.Team/TeamMember, whose @Table has no explicit schema).
 
   flyway:
     enabled: true

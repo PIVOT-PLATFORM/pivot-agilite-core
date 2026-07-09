@@ -12,9 +12,16 @@ spring:
     hibernate:
       ddl-auto: none
     open-in-view: false
-    properties:
-      hibernate:
-        default_schema: agilite
+    # US20.1.1: no blanket hibernate.default_schema here (deliberately removed) — this repo now
+    # imports fr.pivot.core.team.Team/TeamMember from pivot-core-starter, whose @Table has no
+    # explicit schema attribute; a global default_schema: agilite would silently misdirect their
+    # queries to agilite.teams/agilite.team_members (which don't exist) instead of
+    # public.teams/public.team_members. Every entity this repo owns declares its schema
+    # explicitly instead (@Table(schema = "agilite") for RetroSession, @Table(schema = "public")
+    # for the read-only PlatformAccessToken/PlatformUser/PlatformTenant mirrors), so Team/
+    # TeamMember's unqualified table names fall back to Postgres's own default search_path
+    # ("$user", public) and resolve correctly without any starter-side change. First consumer of
+    # Team/TeamMember across all pivot-xxx-core repos — no established convention existed yet.
 
   flyway:
     enabled: true
