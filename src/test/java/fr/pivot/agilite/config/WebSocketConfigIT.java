@@ -1,5 +1,8 @@
 package fr.pivot.agilite.config;
 
+import fr.pivot.agilite.poker.ws.PokerChannelInterceptor;
+import fr.pivot.agilite.ws.WsSessionRegistry;
+import fr.pivot.agilite.ws.WsSessionTrackingHandlerDecoratorFactory;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -17,6 +20,7 @@ import org.testcontainers.utility.DockerImageName;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
 
 /**
  * Integration test proving {@link WebSocketConfig}'s STOMP broker relay actually connects to
@@ -78,7 +82,13 @@ class WebSocketConfigIT {
         assertThat(brokerAvailable).isTrue();
     }
 
-    /** Captures {@link BrokerAvailabilityEvent} into a plain flag observable by the test. */
+    /**
+     * Captures {@link BrokerAvailabilityEvent} into a plain flag observable by the test, and
+     * supplies mocked EN09.1 collaborators so this slice context (only {@link WebSocketConfig}
+     * plus this configuration) can satisfy {@link WebSocketConfig}'s constructor without pulling
+     * in the full poker room-isolation stack (Redis, grant store) — irrelevant to what this test
+     * proves (the ActiveMQ relay connects).
+     */
     @Configuration
     static class BrokerAvailabilityCaptureConfig {
 
@@ -90,6 +100,32 @@ class WebSocketConfigIT {
         @Bean
         AtomicBoolean brokerAvailable() {
             return new AtomicBoolean(false);
+        }
+
+        /**
+         * Mocked EN09.1 room-isolation interceptor — unused by this relay-connectivity test.
+         *
+         * @return a Mockito mock
+         */
+        @Bean
+        PokerChannelInterceptor pokerChannelInterceptor() {
+            return mock(PokerChannelInterceptor.class);
+        }
+
+        /**
+         * A <strong>real</strong> (not mocked) session-tracking decorator factory, backed by a
+         * real {@link WsSessionRegistry} — Spring's own STOMP endpoint infrastructure invokes
+         * {@code decorate(handler)} while building {@code stompWebSocketHandlerMapping} even
+         * under {@code WebEnvironment.NONE}; a Mockito mock's unstubbed {@code decorate} returns
+         * {@code null} by default, which breaks that infrastructure with "WebSocketHandler is
+         * required" (verified empirically). Both collaborators are cheap, dependency-free POJOs,
+         * so using the real thing is simpler than stubbing the mock to behave correctly anyway.
+         *
+         * @return a real decorator factory backed by a fresh registry
+         */
+        @Bean
+        WsSessionTrackingHandlerDecoratorFactory sessionTrackingHandlerDecoratorFactory() {
+            return new WsSessionTrackingHandlerDecoratorFactory(new WsSessionRegistry());
         }
 
         /**

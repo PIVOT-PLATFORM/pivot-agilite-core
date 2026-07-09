@@ -43,3 +43,11 @@ logging:
     fr.pivot: DEBUG
     org.springframework.web: DEBUG
     org.flywaydb: INFO
+
+pivot:
+  activemq:
+    # See WebSocketConfig#configureMessageBroker JavaDoc (EN09.1) — an unreachable EN07.3 relay
+    # target is unsafe to leave enabled alongside the new poker room SimpleBroker in tests that
+    # provide no real ActiveMQ broker. WebSocketConfigIT (EN07.3, real ActiveMQ Testcontainer)
+    # overrides this back to true via @DynamicPropertySource.
+    relay-enabled: false

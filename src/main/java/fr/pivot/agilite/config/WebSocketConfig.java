@@ -1,15 +1,21 @@
 package fr.pivot.agilite.config;
 
+import fr.pivot.agilite.poker.ws.PokerChannelInterceptor;
+import fr.pivot.agilite.ws.WsConnectionHandshakeHandler;
+import fr.pivot.agilite.ws.WsSessionTrackingHandlerDecoratorFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.messaging.simp.config.ChannelRegistration;
 import org.springframework.messaging.simp.config.MessageBrokerRegistry;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 import org.springframework.web.socket.config.annotation.EnableWebSocketMessageBroker;
 import org.springframework.web.socket.config.annotation.StompEndpointRegistry;
 import org.springframework.web.socket.config.annotation.WebSocketMessageBrokerConfigurer;
+import org.springframework.web.socket.config.annotation.WebSocketTransportRegistration;
 
 /**
  * STOMP broker relay configuration for the Agilite domain (EN07.3 — ActiveMQ persistence
- * KahaDB, multi-repo).
+ * KahaDB, multi-repo) plus, additively, the EN09.1 planning-poker room broker.
  *
  * <p>Relays STOMP traffic to the shared ActiveMQ broker (owned and configured by
  * {@code pivot-core}: KahaDB persistence, {@code DLQ.agilite}, memory/store limits, internal-
@@ -24,17 +30,21 @@ import org.springframework.web.socket.config.annotation.WebSocketMessageBrokerCo
  * browser realtime collaboration on capacity planning/standup ({@code CLAUDE.md}), so this only
  * moves that already-planned plumbing slightly earlier.
  *
- * <p><strong>Security — no authentication yet (deliberate, documented gap):</strong> this
- * repo has no {@code SecurityConfig} and no opaque-token validation at all yet — {@code
- * fr.pivot:pivot-core-starter} is not published/consumable (see {@code CLAUDE.md}), so no
- * module in this bootstrap phase can validate a bearer token, REST or WebSocket alike. The
- * {@code /ws/agilite} endpoint registered below is consequently unauthenticated, exactly like
- * every other endpoint in this repo today — not a new gap introduced by this Enabler. It must
- * not carry real user data until an auth interceptor (mirroring {@code pivot-core}'s
- * {@code StompAuthChannelInterceptor} pattern once the starter is consumable) is added — this
- * is a hard prerequisite for the first realtime US, not for this Enabler.
+ * <p><strong>Security — no bearer-token authentication yet (deliberate, documented gap):</strong>
+ * this repo has no {@code SecurityConfig} and no opaque-token validation at all yet — {@code
+ * fr.pivot:pivot-core-starter} is not published/consumable (see {@code CLAUDE.md}). The
+ * {@code /ws/agilite} endpoint therefore assigns every connection an anonymous, server-generated
+ * {@link fr.pivot.agilite.ws.WsConnectionPrincipal} (see {@link WsConnectionHandshakeHandler}) —
+ * a correlation handle for error-notification addressing only, carrying no user/tenant claim.
+ * EN09.1's room isolation is deliberately built without depending on a trusted client identity
+ * at all (see {@link PokerChannelInterceptor}'s and {@code RoomAccessGrantService}'s JavaDoc) —
+ * this is not a workaround for the missing auth, it is the intended long-term shape for
+ * ephemeral, code-joined rooms. Real bearer-token identity (mirroring pivot-core's
+ * {@code StompAuthChannelInterceptor} pattern once the starter is consumable) remains a hard
+ * prerequisite for any future feature that needs to know *which authenticated user* sent a
+ * message (e.g. attributing a vote) — not for this Enabler.
  *
- * <p><strong>Domain isolation ({@code /topic/agilite.} prefix):</strong> {@link
+ * <p><strong>Domain isolation ({@code /topic/agilite.} prefix, EN07.3):</strong> {@link
  * MessageBrokerRegistry#enableStompBrokerRelay(String...)} only relays messages whose
  * destination starts with one of the given prefixes — anything else is silently not
  * forwarded by this JVM's relay handler (see {@code
@@ -48,72 +58,170 @@ import org.springframework.web.socket.config.annotation.WebSocketMessageBrokerCo
  * over-building (see e.g. {@code pivot-core/docker-compose.prod.yml}'s note on unauthenticated
  * Redis).
  *
- * <p><strong>Destination naming — dot, not slash:</strong> the backlog AC describes topics as
- * {@code /topic/agilite/**} (prose intent: "all topics under this domain"). The actual
- * destinations used here are dot-separated after the prefix (e.g. {@code
- * /topic/agilite.capacity-updated}), because ActiveMQ's wildcard destination matching — used
- * broker-side for the {@code DLQ.agilite} dead-letter policy ({@code topic="agilite.>"}) —
+ * <p><strong>Destination naming — dot, not slash, for the EN07.3 relay only:</strong> the
+ * backlog AC describes topics as {@code /topic/agilite/**} (prose intent: "all topics under
+ * this domain"). The actual destinations relayed here are dot-separated after the prefix (e.g.
+ * {@code /topic/agilite.capacity-updated}), because ActiveMQ's wildcard destination matching —
+ * used broker-side for the {@code DLQ.agilite} dead-letter policy ({@code topic="agilite.>"}) —
  * only matches dot-delimited hierarchy segments. A slash-based destination becomes one opaque
  * segment to that matcher and would never match the wildcard.
+ *
+ * <p><strong>EN09.1 — planning-poker room broker (additive, disjoint prefix):</strong> room
+ * traffic ({@code /topic/agilite/poker/{roomId}}, slash-separated — see
+ * {@code fr.pivot.agilite.poker.ws.PokerRoomDestinations}) is registered on its own in-process
+ * {@code SimpleBroker}, not relayed through ActiveMQ: this is ephemeral, single-instance,
+ * low-latency room pub/sub, with no need for the shared durable cross-domain bus, exactly
+ * mirroring {@code pivot-collaboratif-core}'s split between {@code /topic/whiteboard/*}
+ * (SimpleBroker, per-board rooms, EN08.1) and {@code /topic/collaboratif.*} (StompBrokerRelay,
+ * cross-domain bus, EN07.3-equivalent). Spring supports a {@code SimpleBroker} and a
+ * {@code StompBrokerRelay} registered simultaneously as long as their prefixes are disjoint —
+ * confirmed here: {@code /topic/agilite/poker} (slash immediately after {@code agilite}) can
+ * never {@code startsWith}-match {@code /topic/agilite.} (dot immediately after {@code
+ * agilite}), and vice versa. {@code /queue} is registered alongside it for
+ * {@code /user/queue/errors} SUBSCRIBE/SEND-denial notifications (see
+ * {@link PokerChannelInterceptor}). {@link PokerChannelInterceptor} enforces room-scoped
+ * authorization and rate limiting on this traffic; {@link WsSessionTrackingHandlerDecoratorFactory}
+ * lets it force-close a session after repeated violations.
  */
 @Configuration
 @EnableWebSocketMessageBroker
 public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
     /**
-     * STOMP destination prefix relayed by this module — see the class-level JavaDoc for the
-     * isolation and naming rationale. Package-private for direct assertion from tests.
+     * STOMP destination prefix relayed by this module's EN07.3 ActiveMQ relay — see the class-
+     * level JavaDoc for the isolation and naming rationale. Package-private for direct assertion
+     * from tests.
      */
     static final String DOMAIN_TOPIC_PREFIX = "/topic/agilite.";
 
+    /**
+     * STOMP destination prefixes served by the EN09.1 in-process room broker — see the class-
+     * level JavaDoc's "planning-poker room broker" section for why this is a separate broker
+     * registration from {@link #DOMAIN_TOPIC_PREFIX}. Package-private for direct assertion from
+     * tests.
+     */
+    static final String[] ROOM_BROKER_PREFIXES = {"/topic/agilite/poker", "/queue"};
+
     private final String relayHost;
     private final int relayPort;
+    private final boolean relayEnabled;
     private final String allowedOrigins;
+    private final PokerChannelInterceptor pokerChannelInterceptor;
+    private final WsSessionTrackingHandlerDecoratorFactory sessionTrackingHandlerDecoratorFactory;
 
     /**
-     * Creates the configuration with the shared broker's connection coordinates.
+     * Creates the configuration with the shared broker's connection coordinates and the EN09.1
+     * room-isolation collaborators.
      *
-     * @param relayHost      hostname of the shared ActiveMQ broker (STOMP transport)
-     * @param relayPort      STOMP port of the shared ActiveMQ broker
-     * @param allowedOrigins CORS-allowed origins for the WebSocket handshake
+     * @param relayHost                              hostname of the shared ActiveMQ broker
+     *                                                (STOMP transport)
+     * @param relayPort                              STOMP port of the shared ActiveMQ broker
+     * @param relayEnabled                           whether to register the EN07.3 broker relay
+     *                                                at all — {@code false} in the {@code test}
+     *                                                profile (see {@link #configureMessageBroker}
+     *                                                JavaDoc for why)
+     * @param allowedOrigins                         CORS-allowed origins for the WebSocket
+     *                                                handshake
+     * @param pokerChannelInterceptor                STOMP frame interceptor enforcing planning-
+     *                                                poker room access grants and rate limits
+     * @param sessionTrackingHandlerDecoratorFactory  decorator factory that feeds
+     *                                                {@code WsSessionRegistry}, used by
+     *                                                {@code pokerChannelInterceptor} to
+     *                                                force-close a session after repeated
+     *                                                rate-limit violations
      */
     public WebSocketConfig(
             @Value("${pivot.activemq.relay-host}") final String relayHost,
             @Value("${pivot.activemq.relay-port}") final int relayPort,
-            @Value("${pivot.cors.allowed-origins}") final String allowedOrigins) {
+            @Value("${pivot.activemq.relay-enabled:true}") final boolean relayEnabled,
+            @Value("${pivot.cors.allowed-origins}") final String allowedOrigins,
+            final PokerChannelInterceptor pokerChannelInterceptor,
+            final WsSessionTrackingHandlerDecoratorFactory sessionTrackingHandlerDecoratorFactory) {
         this.relayHost = relayHost;
         this.relayPort = relayPort;
+        this.relayEnabled = relayEnabled;
         this.allowedOrigins = allowedOrigins;
+        this.pokerChannelInterceptor = pokerChannelInterceptor;
+        this.sessionTrackingHandlerDecoratorFactory = sessionTrackingHandlerDecoratorFactory;
     }
 
     /**
-     * Configures the STOMP broker relay, scoped to this module's domain prefix, and the
-     * application destination prefix for future {@code @MessageMapping} handlers.
+     * Configures the STOMP broker relay (EN07.3) scoped to this module's domain prefix, the new
+     * EN09.1 in-process room broker (disjoint prefix, see class JavaDoc), and the application
+     * destination prefix for {@code @MessageMapping} handlers.
+     *
+     * <p><strong>{@code pivot.activemq.relay-enabled} toggle (EN09.1 addition):</strong> before
+     * this Enabler, this class registered only the EN07.3 relay, so its (documented, pre-
+     * existing) unreachability in test environments with no ActiveMQ Testcontainer was harmless
+     * in isolation. Adding a second, simultaneous broker registration for room traffic changes
+     * that: {@code pivot-collaboratif-core} empirically found that a {@code StompBrokerRelay}
+     * whose target is unreachable does not fail in isolation — its repeated connection failures
+     * were observed to cascade into {@code ConnectionLostException}s on that module's
+     * {@code SimpleBroker} WebSocket sessions too, even though the two registrations handle
+     * disjoint prefixes. Gating relay registration behind this flag (default {@code true};
+     * {@code false} in {@code application-test.yml}) avoids reproducing that failure mode for
+     * every test exercising EN09.1 room traffic; {@code WebSocketConfigIT} (the one test that
+     * does care about the relay) overrides it back to {@code true} via
+     * {@code @DynamicPropertySource}, against a real Testcontainers broker.
      *
      * @param registry the message broker registry to configure
      */
     @Override
     public void configureMessageBroker(final MessageBrokerRegistry registry) {
-        registry.enableStompBrokerRelay(DOMAIN_TOPIC_PREFIX)
-                .setRelayHost(relayHost)
-                .setRelayPort(relayPort)
-                .setSystemHeartbeatSendInterval(10000)
-                .setSystemHeartbeatReceiveInterval(10000);
+        if (relayEnabled) {
+            registry.enableStompBrokerRelay(DOMAIN_TOPIC_PREFIX)
+                    .setRelayHost(relayHost)
+                    .setRelayPort(relayPort)
+                    .setSystemHeartbeatSendInterval(10000)
+                    .setSystemHeartbeatReceiveInterval(10000);
+        }
+
+        ThreadPoolTaskScheduler heartbeatScheduler = new ThreadPoolTaskScheduler();
+        heartbeatScheduler.setPoolSize(1);
+        heartbeatScheduler.setThreadNamePrefix("ws-room-heartbeat-");
+        heartbeatScheduler.initialize();
+        registry.enableSimpleBroker(ROOM_BROKER_PREFIXES)
+                .setHeartbeatValue(new long[]{25000L, 30000L})
+                .setTaskScheduler(heartbeatScheduler);
+
         registry.setApplicationDestinationPrefixes("/app/agilite");
     }
 
     /**
-     * Registers the minimal WebSocket endpoint required for the broker relay infrastructure
-     * to start (see the class-level JavaDoc). No {@code @MessageMapping} handler exists yet
-     * behind {@code /app/agilite}, and nothing publishes real data on {@code /topic/agilite.}
-     * yet, so this endpoint currently carries no functional traffic — it exists only so the
-     * relay itself can be wired and proven to connect (EN07.3's scope).
+     * Registers the WebSocket endpoint required for the broker relay infrastructure to start
+     * (see the class-level JavaDoc), with the anonymous {@link WsConnectionHandshakeHandler}
+     * (EN09.1) assigning every connection a correlation identity for error-notification
+     * addressing.
      *
      * @param registry the STOMP endpoint registry
      */
     @Override
     public void registerStompEndpoints(final StompEndpointRegistry registry) {
         registry.addEndpoint("/ws/agilite")
+                .setHandshakeHandler(new WsConnectionHandshakeHandler())
                 .setAllowedOriginPatterns(allowedOrigins.split(","));
+    }
+
+    /**
+     * Registers {@link WsSessionTrackingHandlerDecoratorFactory} so sessions can later be
+     * force-closed by ID (EN09.1 rate-limit strike enforcement, see
+     * {@link PokerChannelInterceptor}).
+     *
+     * @param registration the transport registration to configure
+     */
+    @Override
+    public void configureWebSocketTransport(final WebSocketTransportRegistration registration) {
+        registration.addDecoratorFactory(sessionTrackingHandlerDecoratorFactory);
+    }
+
+    /**
+     * Registers {@link PokerChannelInterceptor} on the client inbound channel, enforcing EN09.1
+     * room isolation on every SUBSCRIBE/SEND frame.
+     *
+     * @param registration the inbound channel registration
+     */
+    @Override
+    public void configureClientInboundChannel(final ChannelRegistration registration) {
+        registration.interceptors(pokerChannelInterceptor);
     }
 }
