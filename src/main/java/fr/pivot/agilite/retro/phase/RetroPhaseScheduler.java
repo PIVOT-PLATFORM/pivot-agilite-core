@@ -72,4 +72,41 @@ public class RetroPhaseScheduler {
             }
         }
     }
+
+    /**
+     * Scans every {@code VOTE}-phase session and auto-transitions those whose configured {@code
+     * voteTimerSeconds} has elapsed since the session entered {@code VOTE} (US20.1.2b AC: "when
+     * le timer configuré expire ... then la phase passe à ACTION").
+     *
+     * <p><strong>{@code updatedAt}, not {@code createdAt}, is the "VOTE phase started at"
+     * marker.</strong> Unlike {@link #checkContributionTimers()} — where a session's {@code
+     * createdAt} already *is* the start of its first phase — {@code VOTE} is not the session's
+     * initial phase, so its start time is not a fixed, immutable column. Instead this relies on
+     * the invariant, already true today, that a {@link RetroSession} row's {@code updatedAt} is
+     * only ever refreshed by a phase transition ({@code RetroPhaseService#transitionTo}/{@code
+     * transitionToActionWithRanking} calling {@code session.setCurrentPhase(...)} then {@code
+     * save(...)}, which triggers the entity's {@code @PreUpdate}). Entering {@code VOTE} via
+     * {@link RetroPhaseService#openVote} is itself such a transition, so it naturally stamps
+     * {@code updatedAt} with exactly the timestamp this scheduler needs — no dedicated "phase
+     * started at" column required, mirroring {@code checkContributionTimers()}'s own rationale for
+     * {@code createdAt}/{@code CONTRIBUTION}.
+     *
+     * <p>Sessions with no configured {@code voteTimerSeconds} ({@code null} — manual closure
+     * only) are skipped entirely, never auto-transitioned.
+     */
+    @Scheduled(fixedDelayString = "${pivot.agilite.retro.phase-scheduler.fixed-delay-ms:2000}")
+    public void checkVoteTimers() {
+        Instant now = clock.instant();
+        for (RetroSession session : sessionRepository.findByCurrentPhase(RetroPhase.VOTE)) {
+            Integer timerSeconds = session.getVoteTimerSeconds();
+            if (timerSeconds == null) {
+                continue;
+            }
+            Instant deadline = session.getUpdatedAt().plusSeconds(timerSeconds);
+            if (!deadline.isAfter(now)) {
+                LOG.debug("Vote timer elapsed for session={}, auto-transitioning to ACTION", session.getId());
+                phaseService.autoTransitionToAction(session.getId());
+            }
+        }
+    }
 }

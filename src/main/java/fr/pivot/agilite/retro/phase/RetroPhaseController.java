@@ -63,4 +63,34 @@ public class RetroPhaseController {
     public RevealResponse reveal(@PathVariable final UUID id, final RequestPrincipal principal) {
         return phaseService.reveal(id, principal.userId(), principal.tenantId());
     }
+
+    /**
+     * Manually opens the vote phase, immediately transitioning to {@link RetroPhase#VOTE}
+     * (US20.1.2b).
+     *
+     * @param id        the session UUID from the path
+     * @param principal the resolved caller identity (must be the session's facilitator)
+     * @return the session's new phase
+     */
+    @PostMapping("/vote/open")
+    public Map<String, RetroPhase> openVote(
+            @PathVariable final UUID id, final RequestPrincipal principal) {
+        RetroPhase newPhase = phaseService.openVote(id, principal.userId(), principal.tenantId());
+        return Map.of("currentPhase", newPhase);
+    }
+
+    /**
+     * Manually closes the vote phase, immediately transitioning to {@link RetroPhase#ACTION} —
+     * the broadcast {@code PHASE_CHANGED} event carries the vote-count ranking (US20.1.2b).
+     *
+     * @param id        the session UUID from the path
+     * @param principal the resolved caller identity (must be the session's facilitator)
+     * @return the session's new phase
+     */
+    @PostMapping("/vote/close")
+    public Map<String, RetroPhase> closeVote(
+            @PathVariable final UUID id, final RequestPrincipal principal) {
+        RetroPhase newPhase = phaseService.closeVote(id, principal.userId(), principal.tenantId());
+        return Map.of("currentPhase", newPhase);
+    }
 }

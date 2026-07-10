@@ -207,6 +207,92 @@ class RetroPhaseControllerIT {
     }
 
     // -------------------------------------------------------------------------
+    // POST /retro/sessions/{id}/vote/open
+    // -------------------------------------------------------------------------
+
+    @Test
+    void openVote_asFacilitatorInRevuePhase_transitionsToVote() throws Exception {
+        String sessionId = createSession();
+        advancePhase(sessionId, RetroPhase.REVUE);
+
+        mockMvc.perform(
+                        post("/retro/sessions/" + sessionId + "/vote/open")
+                                .header("Authorization", "Bearer " + facilitatorToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.currentPhase").value("VOTE"));
+    }
+
+    @Test
+    void openVote_asNonFacilitator_returns403() throws Exception {
+        String sessionId = createSession();
+        advancePhase(sessionId, RetroPhase.REVUE);
+        long memberId = PlatformAuthTestSupport.seedUser(
+                postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword(), tenantId, true);
+        String memberToken = PlatformAuthTestSupport.issueToken(
+                postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword(),
+                memberId, "active", Instant.now().plusSeconds(3600));
+
+        mockMvc.perform(
+                        post("/retro/sessions/" + sessionId + "/vote/open")
+                                .header("Authorization", "Bearer " + memberToken))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void openVote_stillInContribution_returns409() throws Exception {
+        String sessionId = createSession();
+
+        mockMvc.perform(
+                        post("/retro/sessions/" + sessionId + "/vote/open")
+                                .header("Authorization", "Bearer " + facilitatorToken))
+                .andExpect(status().isConflict());
+    }
+
+    // -------------------------------------------------------------------------
+    // POST /retro/sessions/{id}/vote/close
+    // -------------------------------------------------------------------------
+
+    @Test
+    void closeVote_asFacilitatorInVotePhase_transitionsToActionWithRanking() throws Exception {
+        String sessionId = createSession();
+        advancePhase(sessionId, RetroPhase.VOTE);
+        seedCard(sessionId, "went-well", "Good pace");
+
+        mockMvc.perform(
+                        post("/retro/sessions/" + sessionId + "/vote/close")
+                                .header("Authorization", "Bearer " + facilitatorToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.currentPhase").value("ACTION"));
+    }
+
+    @Test
+    void closeVote_asNonFacilitator_returns403() throws Exception {
+        String sessionId = createSession();
+        advancePhase(sessionId, RetroPhase.VOTE);
+        long memberId = PlatformAuthTestSupport.seedUser(
+                postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword(), tenantId, true);
+        String memberToken = PlatformAuthTestSupport.issueToken(
+                postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword(),
+                memberId, "active", Instant.now().plusSeconds(3600));
+
+        mockMvc.perform(
+                        post("/retro/sessions/" + sessionId + "/vote/close")
+                                .header("Authorization", "Bearer " + memberToken))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void closeVote_stillInRevue_returns409() throws Exception {
+        String sessionId = createSession();
+        advancePhase(sessionId, RetroPhase.REVUE);
+
+        mockMvc.perform(
+                        post("/retro/sessions/" + sessionId + "/vote/close")
+                                .header("Authorization", "Bearer " + facilitatorToken))
+                .andExpect(status().isConflict());
+    }
+
+    // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
 
