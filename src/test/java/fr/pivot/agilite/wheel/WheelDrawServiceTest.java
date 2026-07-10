@@ -6,6 +6,7 @@ import fr.pivot.agilite.exception.WheelNotFoundException;
 import fr.pivot.agilite.exception.WheelValidationException;
 import fr.pivot.agilite.wheel.dto.WheelDrawResponse;
 import fr.pivot.agilite.wheel.dto.WheelSpinResponse;
+import fr.pivot.agilite.wheel.ws.WheelDestinations;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -14,6 +15,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.Instant;
@@ -31,9 +33,18 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * Unit tests for {@link WheelDrawService} (US14.2.1), focused on the anti-repeat wiring, error
- * paths, and history retrieval — the pure weighted-selection statistics are covered separately by
- * {@link WeightedEntrySelectorTest} without any Spring/Mockito wiring.
+ * Unit tests for {@link WheelDrawService} (US14.2.1/US14.3.1), focused on the anti-repeat wiring,
+ * error paths, history retrieval, and the real-time broadcast — the pure weighted-selection
+ * statistics are covered separately by {@link WeightedEntrySelectorTest} without any
+ * Spring/Mockito wiring.
+ *
+ * <p>These tests never run inside a real Spring-managed transaction (plain Mockito, no {@code
+ * @SpringBootTest}), so {@link org.springframework.transaction.support.TransactionSynchronizationManager
+ * #isSynchronizationActive()} is always {@code false} here — every broadcast fires immediately
+ * (the documented defensive fallback in {@code WheelDrawService#scheduleBroadcast}), which is
+ * exactly what lets this class assert on it directly. The after-commit deferral itself (only
+ * broadcasting once a real transaction commits, never on rollback) is proven separately, against
+ * a real transactional Spring context, by {@code WheelWsIsolationIT}.
  *
  * <p>Full end-to-end HTTP/persistence coverage (real Postgres via Testcontainers, cross-tenant
  * isolation) is in {@code WheelSpinControllerIT}.
@@ -54,11 +65,15 @@ class WheelDrawServiceTest {
     @Mock
     private WheelDrawRepository wheelDrawRepository;
 
+    @Mock
+    private SimpMessagingTemplate messagingTemplate;
+
     private WheelDrawService wheelDrawService;
 
     @BeforeEach
     void setUp() {
-        wheelDrawService = new WheelDrawService(wheelRepository, teamMemberRepository, wheelDrawRepository);
+        wheelDrawService =
+                new WheelDrawService(wheelRepository, teamMemberRepository, wheelDrawRepository, messagingTemplate);
         lenient().when(wheelRepository.save(any(Wheel.class))).thenAnswer(invocation -> invocation.getArgument(0));
         lenient().when(teamMemberRepository.existsByTeamIdAndUserId(TEAM_ID, CALLER_USER_ID)).thenReturn(true);
     }
@@ -84,6 +99,20 @@ class WheelDrawServiceTest {
         assertThat(persisted.getEntryId()).isEqualTo(onlyEntry.getId());
         assertThat(persisted.getEntryLabel()).isEqualTo(onlyEntry.getLabel());
         assertThat(persisted.getDrawnAt()).isNotNull();
+    }
+
+    @Test
+    void spin_broadcastsExactHttpResponseShapeOnTheWheelsTopic() {
+        Wheel wheel = wheelWithEntries(1);
+        WheelEntry onlyEntry = wheel.getEntries().get(0);
+        when(wheelRepository.findByIdAndTenantId(wheel.getId(), TENANT_ID)).thenReturn(Optional.of(wheel));
+
+        WheelSpinResponse response = wheelDrawService.spin(wheel.getId(), null, CALLER_USER_ID, TENANT_ID);
+
+        ArgumentCaptor<Object> payloadCaptor = ArgumentCaptor.forClass(Object.class);
+        verify(messagingTemplate).convertAndSend(eq(WheelDestinations.wheelTopic(wheel.getId())), payloadCaptor.capture());
+        assertThat(payloadCaptor.getValue()).isEqualTo(response);
+        assertThat(response.entryId()).isEqualTo(onlyEntry.getId());
     }
 
     @Test
@@ -116,6 +145,7 @@ class WheelDrawServiceTest {
                 .satisfies(ex -> assertThat(((WheelValidationException) ex).getCode())
                         .isEqualTo("INVALID_ANTI_REPEAT_MODE"));
         verify(wheelDrawRepository, never()).save(any());
+        verify(messagingTemplate, never()).convertAndSend(any(String.class), any(Object.class));
     }
 
     @Test
@@ -127,6 +157,7 @@ class WheelDrawServiceTest {
         assertThatThrownBy(() -> wheelDrawService.spin(wheel.getId(), null, CALLER_USER_ID, TENANT_ID))
                 .isInstanceOf(WheelEmptyException.class);
         verify(wheelDrawRepository, never()).save(any());
+        verify(messagingTemplate, never()).convertAndSend(any(String.class), any(Object.class));
     }
 
     @Test
@@ -136,6 +167,7 @@ class WheelDrawServiceTest {
 
         assertThatThrownBy(() -> wheelDrawService.spin(wheelId, null, CALLER_USER_ID, TENANT_ID))
                 .isInstanceOf(WheelNotFoundException.class);
+        verify(messagingTemplate, never()).convertAndSend(any(String.class), any(Object.class));
     }
 
     @Test
@@ -147,6 +179,7 @@ class WheelDrawServiceTest {
         assertThatThrownBy(() -> wheelDrawService.spin(wheel.getId(), null, CALLER_USER_ID, TENANT_ID))
                 .isInstanceOf(WheelNotFoundException.class);
         verify(wheelDrawRepository, never()).save(any());
+        verify(messagingTemplate, never()).convertAndSend(any(String.class), any(Object.class));
     }
 
     @Test

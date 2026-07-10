@@ -15,7 +15,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -168,6 +170,39 @@ class WheelServiceTest {
 
         assertThatThrownBy(() -> wheelService.findById(wheelId, CALLER_USER_ID, TENANT_ID))
                 .isInstanceOf(WheelNotFoundException.class);
+    }
+
+    /**
+     * {@link WheelService#isAccessibleTo} is consumed by {@code WheelChannelInterceptor}
+     * (US14.3.1) to authorize a WebSocket subscription — these tests prove it reuses exactly the
+     * same existence/tenant/team-membership resolution as the REST endpoints, without throwing.
+     */
+    @Test
+    void isAccessibleTo_whenWheelExistsAndCallerIsTeamMember_returnsTrue() {
+        Wheel wheel = new Wheel(TENANT_ID, TEAM_ID, "Roue", CALLER_USER_ID, Instant.now());
+        ReflectionTestUtils.setField(wheel, "id", UUID.randomUUID());
+        when(wheelRepository.findByIdAndTenantId(wheel.getId(), TENANT_ID)).thenReturn(Optional.of(wheel));
+        when(teamMemberRepository.existsByTeamIdAndUserId(TEAM_ID, CALLER_USER_ID)).thenReturn(true);
+
+        assertThat(wheelService.isAccessibleTo(wheel.getId(), CALLER_USER_ID, TENANT_ID)).isTrue();
+    }
+
+    @Test
+    void isAccessibleTo_whenWheelDoesNotExistOrBelongsToAnotherTenant_returnsFalse() {
+        UUID wheelId = UUID.randomUUID();
+        when(wheelRepository.findByIdAndTenantId(wheelId, TENANT_ID)).thenReturn(Optional.empty());
+
+        assertThat(wheelService.isAccessibleTo(wheelId, CALLER_USER_ID, TENANT_ID)).isFalse();
+    }
+
+    @Test
+    void isAccessibleTo_whenCallerIsNotMemberOfWheelsTeam_returnsFalse() {
+        Wheel wheel = new Wheel(TENANT_ID, TEAM_ID, "Roue", CALLER_USER_ID, Instant.now());
+        ReflectionTestUtils.setField(wheel, "id", UUID.randomUUID());
+        when(wheelRepository.findByIdAndTenantId(wheel.getId(), TENANT_ID)).thenReturn(Optional.of(wheel));
+        when(teamMemberRepository.existsByTeamIdAndUserId(TEAM_ID, CALLER_USER_ID)).thenReturn(false);
+
+        assertThat(wheelService.isAccessibleTo(wheel.getId(), CALLER_USER_ID, TENANT_ID)).isFalse();
     }
 
     private static PlatformTeam mockTeam(final Long id, final Long tenantId) {

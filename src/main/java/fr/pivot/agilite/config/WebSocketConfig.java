@@ -2,6 +2,7 @@ package fr.pivot.agilite.config;
 
 import fr.pivot.agilite.poker.ws.PokerChannelInterceptor;
 import fr.pivot.agilite.retro.ws.RetroChannelInterceptor;
+import fr.pivot.agilite.wheel.ws.WheelChannelInterceptor;
 import fr.pivot.agilite.ws.WsConnectionHandshakeHandler;
 import fr.pivot.agilite.ws.WsSessionTrackingHandlerDecoratorFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -92,6 +93,18 @@ import org.springframework.web.socket.config.annotation.WebSocketTransportRegist
  * enableSimpleBroker} accepts any number of disjoint prefixes in one registration. {@link
  * RetroChannelInterceptor} enforces the same session-scoped authorization/rate-limiting pattern
  * as {@link PokerChannelInterceptor}, registered alongside it on the same inbound channel.
+ *
+ * <p><strong>US14.3.1 — wheel broker (same in-process {@code SimpleBroker}, additional disjoint
+ * prefix):</strong> {@code /topic/agilite/wheels/{wheelId}} (see {@code
+ * fr.pivot.agilite.wheel.ws.WheelDestinations}) is registered on the exact same {@code
+ * SimpleBroker} instance as planning-poker rooms and retro sessions — same "ephemeral,
+ * single-instance, no need for the durable cross-domain bus" rationale. {@link
+ * WheelChannelInterceptor} enforces subscription authorization, but — unlike poker/retro —
+ * against the caller's real bearer-token identity and the wheel's own team-membership check
+ * (reused from {@code WheelService}), not an opaque session grant: a wheel belongs to a
+ * permanent team, not an ad hoc invite-code-joined room/session. No rate limiting is registered
+ * for this prefix — there is no client-to-server application destination for wheels to abuse
+ * (see {@link WheelChannelInterceptor}'s JavaDoc).
  */
 @Configuration
 @EnableWebSocketMessageBroker
@@ -110,7 +123,8 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
      * registration from {@link #DOMAIN_TOPIC_PREFIX}. Package-private for direct assertion from
      * tests.
      */
-    static final String[] ROOM_BROKER_PREFIXES = {"/topic/agilite/poker", "/topic/agilite/retro", "/queue"};
+    static final String[] ROOM_BROKER_PREFIXES =
+            {"/topic/agilite/poker", "/topic/agilite/retro", "/topic/agilite/wheels", "/queue"};
 
     private final String relayHost;
     private final int relayPort;
@@ -118,6 +132,7 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     private final String allowedOrigins;
     private final PokerChannelInterceptor pokerChannelInterceptor;
     private final RetroChannelInterceptor retroChannelInterceptor;
+    private final WheelChannelInterceptor wheelChannelInterceptor;
     private final WsSessionTrackingHandlerDecoratorFactory sessionTrackingHandlerDecoratorFactory;
 
     /**
@@ -138,6 +153,8 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
      * @param retroChannelInterceptor                STOMP frame interceptor enforcing retro
      *                                                session access grants and rate limits
      *                                                (US20.1.2a)
+     * @param wheelChannelInterceptor                 STOMP frame interceptor enforcing wheel
+     *                                                subscription authorization (US14.3.1)
      * @param sessionTrackingHandlerDecoratorFactory  decorator factory that feeds
      *                                                {@code WsSessionRegistry}, used by
      *                                                {@code pokerChannelInterceptor}/{@code
@@ -151,6 +168,7 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
             @Value("${pivot.cors.allowed-origins}") final String allowedOrigins,
             final PokerChannelInterceptor pokerChannelInterceptor,
             final RetroChannelInterceptor retroChannelInterceptor,
+            final WheelChannelInterceptor wheelChannelInterceptor,
             final WsSessionTrackingHandlerDecoratorFactory sessionTrackingHandlerDecoratorFactory) {
         this.relayHost = relayHost;
         this.relayPort = relayPort;
@@ -158,6 +176,7 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
         this.allowedOrigins = allowedOrigins;
         this.pokerChannelInterceptor = pokerChannelInterceptor;
         this.retroChannelInterceptor = retroChannelInterceptor;
+        this.wheelChannelInterceptor = wheelChannelInterceptor;
         this.sessionTrackingHandlerDecoratorFactory = sessionTrackingHandlerDecoratorFactory;
     }
 
@@ -231,15 +250,16 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     }
 
     /**
-     * Registers {@link PokerChannelInterceptor} and {@link RetroChannelInterceptor} on the client
-     * inbound channel, enforcing EN09.1/US20.1.2a room isolation on every SUBSCRIBE/SEND frame.
-     * Each interceptor only ever acts on its own domain's destination prefixes (see their
-     * respective JavaDoc) — registering both has no effect on the other's traffic.
+     * Registers {@link PokerChannelInterceptor}, {@link RetroChannelInterceptor} and
+     * {@link WheelChannelInterceptor} on the client inbound channel, enforcing EN09.1/US20.1.2a/
+     * US14.3.1 isolation on every SUBSCRIBE (and, for poker/retro, SEND) frame. Each interceptor
+     * only ever acts on its own domain's destination prefixes (see their respective JavaDoc) —
+     * registering all three has no effect on one another's traffic.
      *
      * @param registration the inbound channel registration
      */
     @Override
     public void configureClientInboundChannel(final ChannelRegistration registration) {
-        registration.interceptors(pokerChannelInterceptor, retroChannelInterceptor);
+        registration.interceptors(pokerChannelInterceptor, retroChannelInterceptor, wheelChannelInterceptor);
     }
 }
