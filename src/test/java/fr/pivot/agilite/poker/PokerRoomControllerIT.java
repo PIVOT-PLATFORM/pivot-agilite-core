@@ -1,5 +1,7 @@
 package fr.pivot.agilite.poker;
 
+import fr.pivot.agilite.exception.GlobalExceptionHandler;
+import fr.pivot.agilite.poker.exception.PokerFacilitatorOnlyException;
 import fr.pivot.agilite.poker.ws.RoomAccessGrantService;
 import fr.pivot.agilite.testsupport.PlatformAuthTestSupport;
 import fr.pivot.agilite.testsupport.PlatformAuthTestSupport.AuthFixture;
@@ -7,7 +9,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.http.ProblemDetail;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -23,8 +27,11 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 import java.sql.DriverManager;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -80,6 +87,9 @@ class PokerRoomControllerIT {
 
     @Autowired
     private RoomAccessGrantService roomAccessGrantService;
+
+    @Autowired
+    private GlobalExceptionHandler globalExceptionHandler;
 
     private MockMvc mockMvc;
 
@@ -493,6 +503,236 @@ class PokerRoomControllerIT {
     }
 
     // -------------------------------------------------------------------------
+    // POST /poker/rooms/join-anonymous (US09.3.1)
+    // -------------------------------------------------------------------------
+
+    /**
+     * Given a valid, active, non-expired invite code and no {@code Authorization} header at all,
+     * when POST /poker/rooms/join-anonymous is called with no pseudonym, then it returns HTTP
+     * 200 with the joined room's id, a non-blank accessToken, a non-blank sessionId, a generated
+     * pseudonym, a guestSessionExpiresAt, and a wsTopic — and the returned accessToken is
+     * immediately usable and recognized as a guest grant, not a standard one.
+     */
+    @Test
+    void joinAnonymous_validCode_returns200WithGuestGrantNoAuthHeaderNeeded() throws Exception {
+        JsonNode createdRoom = createRoomNode(tokenA, "Sprint 8 estimation");
+        String roomId = createdRoom.get("id").asText();
+        String inviteCode = createdRoom.get("inviteCode").asText();
+
+        MvcResult result = mockMvc.perform(post(BASE_PATH + "/join-anonymous")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"code\": \"" + inviteCode + "\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.roomId").value(roomId))
+                .andExpect(jsonPath("$.name").value("Sprint 8 estimation"))
+                .andExpect(jsonPath("$.accessToken").isNotEmpty())
+                .andExpect(jsonPath("$.sessionId").isNotEmpty())
+                .andExpect(jsonPath("$.guestSessionExpiresAt").isNotEmpty())
+                .andExpect(jsonPath("$.wsTopic").value("/topic/agilite/poker/" + roomId))
+                .andReturn();
+
+        JsonNode body = objectMapper.readTree(result.getResponse().getContentAsString());
+        String accessToken = body.get("accessToken").asText();
+        assertThat(body.get("pseudonym").asText()).startsWith("Invité-");
+        UUID roomUuid = UUID.fromString(roomId);
+        assertThat(roomAccessGrantService.hasAccess(roomUuid, accessToken)).isTrue();
+        assertThat(roomAccessGrantService.isGuest(roomUuid, accessToken)).isTrue();
+    }
+
+    /**
+     * Given a caller-supplied pseudonym, when POST /poker/rooms/join-anonymous is called, then
+     * the response carries that exact (trimmed) pseudonym.
+     */
+    @Test
+    void joinAnonymous_withPseudonym_returnsThatPseudonym() throws Exception {
+        JsonNode createdRoom = createRoomNode(tokenA, "Room");
+        String inviteCode = createdRoom.get("inviteCode").asText();
+
+        mockMvc.perform(post(BASE_PATH + "/join-anonymous")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"code\": \"" + inviteCode + "\", \"pseudonym\": \"Alex\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.pseudonym").value("Alex"));
+    }
+
+    /**
+     * Given a garbage {@code Authorization} header supplied anyway, when POST
+     * /poker/rooms/join-anonymous is called, then it still succeeds with HTTP 200 — the header
+     * is never read nor validated for this endpoint (US09.3.1 AC).
+     */
+    @Test
+    void joinAnonymous_withGarbageAuthorizationHeaderAnyway_stillSucceeds() throws Exception {
+        JsonNode createdRoom = createRoomNode(tokenA, "Room");
+        String inviteCode = createdRoom.get("inviteCode").asText();
+
+        mockMvc.perform(post(BASE_PATH + "/join-anonymous")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header("Authorization", "Bearer not-a-real-token")
+                        .content("{\"code\": \"" + inviteCode + "\"}"))
+                .andExpect(status().isOk());
+    }
+
+    /**
+     * Error case: given a syntactically valid but unknown 6-character code, when POST
+     * /poker/rooms/join-anonymous is called, then it returns HTTP 404 — same unified posture as
+     * the authenticated join (US09.1.2).
+     */
+    @Test
+    void joinAnonymous_unknownCode_returns404() throws Exception {
+        mockMvc.perform(post(BASE_PATH + "/join-anonymous")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"code\": \"ZZZZZZ\"}"))
+                .andExpect(status().isNotFound());
+    }
+
+    /**
+     * Error case: given a code whose room has since expired, when POST
+     * /poker/rooms/join-anonymous is called, then it returns HTTP 404.
+     */
+    @Test
+    void joinAnonymous_expiredRoomCode_returns404() throws Exception {
+        JsonNode createdRoom = createRoomNode(tokenA, "Expired room");
+        String inviteCode = createdRoom.get("inviteCode").asText();
+        expireRoomByInviteCode(inviteCode);
+
+        mockMvc.perform(post(BASE_PATH + "/join-anonymous")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"code\": \"" + inviteCode + "\"}"))
+                .andExpect(status().isNotFound());
+    }
+
+    /**
+     * Error case: given a blank code, when POST /poker/rooms/join-anonymous is called, then it
+     * returns HTTP 400 with code INVALID_CODE.
+     */
+    @Test
+    void joinAnonymous_blankCode_returns400WithInvalidCodeCode() throws Exception {
+        mockMvc.perform(post(BASE_PATH + "/join-anonymous")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"code\": \"\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_CODE"));
+    }
+
+    /**
+     * Error case: given a pseudonym longer than 40 characters, when POST
+     * /poker/rooms/join-anonymous is called, then it returns HTTP 400 with code
+     * INVALID_PSEUDONYM.
+     */
+    @Test
+    void joinAnonymous_tooLongPseudonym_returns400WithInvalidPseudonymCode() throws Exception {
+        JsonNode createdRoom = createRoomNode(tokenA, "Room");
+        String inviteCode = createdRoom.get("inviteCode").asText();
+        String longPseudonym = "a".repeat(41);
+
+        mockMvc.perform(post(BASE_PATH + "/join-anonymous")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"code\": \"" + inviteCode + "\", \"pseudonym\": \"" + longPseudonym + "\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_PSEUDONYM"));
+    }
+
+    // -------------------------------------------------------------------------
+    // POST /poker/rooms/{roomId}/guest-sessions/heartbeat (US09.3.1)
+    // -------------------------------------------------------------------------
+
+    /**
+     * Given a currently valid guest session, when the heartbeat endpoint is called with no
+     * {@code Authorization} header, then it returns HTTP 200 with a refreshed expiry, and the
+     * underlying access grant remains valid (proving the refresh is real, not just echoed).
+     */
+    @Test
+    void guestHeartbeat_validSession_returns200AndRefreshesGrant() throws Exception {
+        JsonNode createdRoom = createRoomNode(tokenA, "Room");
+        String inviteCode = createdRoom.get("inviteCode").asText();
+        JsonNode joined = joinAnonymousNode(inviteCode, null);
+        String roomId = joined.get("roomId").asText();
+        String accessToken = joined.get("accessToken").asText();
+
+        mockMvc.perform(post(BASE_PATH + "/" + roomId + "/guest-sessions/heartbeat")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"accessToken\": \"" + accessToken + "\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.expiresAt").isNotEmpty());
+
+        assertThat(roomAccessGrantService.hasAccess(UUID.fromString(roomId), accessToken)).isTrue();
+    }
+
+    /**
+     * Error case: given an access token that was never granted, when the heartbeat endpoint is
+     * called, then it returns HTTP 410 Gone with code GUEST_SESSION_EXPIRED — a clear error, not
+     * a silent success.
+     */
+    @Test
+    void guestHeartbeat_unknownAccessToken_returns410() throws Exception {
+        JsonNode createdRoom = createRoomNode(tokenA, "Room");
+        String roomId = createdRoom.get("id").asText();
+
+        mockMvc.perform(post(BASE_PATH + "/" + roomId + "/guest-sessions/heartbeat")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"accessToken\": \"never-granted\"}"))
+                .andExpect(status().isGone())
+                .andExpect(jsonPath("$.code").value("GUEST_SESSION_EXPIRED"));
+    }
+
+    /**
+     * Security AC (US09.3.1): given an anonymous guest session obtained via join-anonymous, when
+     * that session's access grant is checked against {@link
+     * RoomAccessGrantService#requireNonGuest} — the primitive facilitator-only actions
+     * (ticket creation/reveal, US09.2.1/US09.2.2, not yet built in this repo — same sprint wave,
+     * no dependency on this US) are contractually required to call — then it throws {@link
+     * PokerFacilitatorOnlyException}, which {@link GlobalExceptionHandler} maps to HTTP 403 with
+     * code FACILITATOR_ONLY_ACTION: an anonymous session can never perform a facilitator-only
+     * action, proven end-to-end from a real join response through to the HTTP mapping, never a
+     * silent success.
+     */
+    @Test
+    void anonymousSession_cannotPerformFacilitatorOnlyAction_returns403() throws Exception {
+        JsonNode createdRoom = createRoomNode(tokenA, "Room");
+        String inviteCode = createdRoom.get("inviteCode").asText();
+        JsonNode joined = joinAnonymousNode(inviteCode, null);
+        UUID roomId = UUID.fromString(joined.get("roomId").asText());
+        String accessToken = joined.get("accessToken").asText();
+
+        assertThat(roomAccessGrantService.hasAccess(roomId, accessToken)).isTrue();
+        assertThat(roomAccessGrantService.isGuest(roomId, accessToken)).isTrue();
+
+        Throwable thrown = catchThrowable(() -> roomAccessGrantService.requireNonGuest(roomId, accessToken));
+        assertThat(thrown).isInstanceOf(PokerFacilitatorOnlyException.class);
+
+        ProblemDetail problem =
+                globalExceptionHandler.handlePokerFacilitatorOnly((PokerFacilitatorOnlyException) thrown);
+        assertThat(problem.getStatus()).isEqualTo(HttpStatus.FORBIDDEN.value());
+        assertThat(problem.getProperties()).containsEntry("code", "FACILITATOR_ONLY_ACTION");
+    }
+
+    /**
+     * Security AC (US09.3.1): given an authenticated participant's own (non-guest) access grant
+     * from the standard join flow (US09.1.2), when checked against {@link
+     * RoomAccessGrantService#requireNonGuest}, then it does not throw — the guard never rejects
+     * a real, authenticated grant.
+     */
+    @Test
+    void authenticatedParticipantGrant_isNeverRejectedByRequireNonGuest() throws Exception {
+        JsonNode createdRoom = createRoomNode(tokenA, "Room");
+        String inviteCode = createdRoom.get("inviteCode").asText();
+
+        MvcResult result = mockMvc.perform(post(BASE_PATH + "/join")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header("Authorization", "Bearer " + tokenA)
+                        .content("{\"code\": \"" + inviteCode + "\"}"))
+                .andExpect(status().isOk())
+                .andReturn();
+        JsonNode joined = objectMapper.readTree(result.getResponse().getContentAsString());
+        UUID roomId = UUID.fromString(joined.get("roomId").asText());
+        String accessToken = joined.get("accessToken").asText();
+
+        assertThat(roomAccessGrantService.isGuest(roomId, accessToken)).isFalse();
+        assertThatCode(() -> roomAccessGrantService.requireNonGuest(roomId, accessToken))
+                .doesNotThrowAnyException();
+    }
+
+    // -------------------------------------------------------------------------
     // Helper
     // -------------------------------------------------------------------------
 
@@ -506,6 +746,27 @@ class PokerRoomControllerIT {
      */
     private String createRoomFor(final String token, final String name) throws Exception {
         return createRoomNode(token, name).get("id").asText();
+    }
+
+    /**
+     * Joins a room anonymously via the API (no {@code Authorization} header) and returns the
+     * full response body, so callers can read {@code roomId}, {@code accessToken}, etc.
+     *
+     * @param inviteCode the room's invite code
+     * @param pseudonym  the pseudonym to send, or {@code null} to omit the field entirely
+     * @return the anonymous join response body
+     * @throws Exception if the HTTP request fails or the response status is not 200
+     */
+    private JsonNode joinAnonymousNode(final String inviteCode, final String pseudonym) throws Exception {
+        String body = pseudonym == null
+                ? "{\"code\": \"" + inviteCode + "\"}"
+                : "{\"code\": \"" + inviteCode + "\", \"pseudonym\": \"" + pseudonym + "\"}";
+        MvcResult result = mockMvc.perform(post(BASE_PATH + "/join-anonymous")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isOk())
+                .andReturn();
+        return objectMapper.readTree(result.getResponse().getContentAsString());
     }
 
     /**

@@ -1,6 +1,8 @@
 package fr.pivot.agilite.exception;
 
+import fr.pivot.agilite.poker.exception.GuestSessionExpiredException;
 import fr.pivot.agilite.poker.exception.InviteCodeNotFoundException;
+import fr.pivot.agilite.poker.exception.PokerFacilitatorOnlyException;
 import jakarta.validation.ConstraintViolationException;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
@@ -27,6 +29,22 @@ class GlobalExceptionHandlerTest {
         ProblemDetail problem =
                 handler.handleInviteCodeNotFound(new InviteCodeNotFoundException());
         assertThat(problem.getStatus()).isEqualTo(HttpStatus.NOT_FOUND.value());
+    }
+
+    @Test
+    void handleGuestSessionExpired_returns410WithCode() {
+        ProblemDetail problem =
+                handler.handleGuestSessionExpired(new GuestSessionExpiredException());
+        assertThat(problem.getStatus()).isEqualTo(HttpStatus.GONE.value());
+        assertThat(problem.getProperties()).containsEntry("code", "GUEST_SESSION_EXPIRED");
+    }
+
+    @Test
+    void handlePokerFacilitatorOnly_returns403WithCode() {
+        ProblemDetail problem = handler.handlePokerFacilitatorOnly(
+                new PokerFacilitatorOnlyException(java.util.UUID.randomUUID()));
+        assertThat(problem.getStatus()).isEqualTo(HttpStatus.FORBIDDEN.value());
+        assertThat(problem.getProperties()).containsEntry("code", "FACILITATOR_ONLY_ACTION");
     }
 
     @Test

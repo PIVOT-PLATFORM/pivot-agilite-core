@@ -1,6 +1,8 @@
 package fr.pivot.agilite.exception;
 
+import fr.pivot.agilite.poker.exception.GuestSessionExpiredException;
 import fr.pivot.agilite.poker.exception.InviteCodeNotFoundException;
+import fr.pivot.agilite.poker.exception.PokerFacilitatorOnlyException;
 import fr.pivot.agilite.poker.exception.RoomNotFoundException;
 import jakarta.validation.ConstraintViolationException;
 import org.springframework.http.HttpStatus;
@@ -26,8 +28,10 @@ import java.util.Map;
  * InviteCodeNotFoundException}), wheel/team domain exceptions (US14.1.1, {@link
  * WheelNotFoundException}, {@link TeamNotFoundException}, {@link WheelValidationException}), the
  * US14.2.1 weighted anti-repeat draw's defensive empty-wheel guard ({@link
- * WheelEmptyException}), as well as Spring MVC/Bean Validation failures ({@link
- * MethodArgumentNotValidException}, {@link ConstraintViolationException}).
+ * WheelEmptyException}), anonymous guest participation exceptions (US09.3.1, {@link
+ * GuestSessionExpiredException}, {@link PokerFacilitatorOnlyException}), as well as Spring MVC/
+ * Bean Validation failures ({@link MethodArgumentNotValidException}, {@link
+ * ConstraintViolationException}).
  */
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -63,6 +67,40 @@ public class GlobalExceptionHandler {
         ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.NOT_FOUND);
         problem.setTitle("Invite code not found");
         problem.setDetail(ex.getMessage());
+        return problem;
+    }
+
+    /**
+     * Returns HTTP 410 Gone when an anonymous guest session's {@code accessToken} does not
+     * resolve to a currently valid access grant (US09.3.1) — never issued, expired (2h
+     * inactivity, ADR-026 §2), or the room itself no longer active/expired. These causes are
+     * deliberately never distinguished, same posture as {@link InviteCodeNotFoundException}.
+     *
+     * @param ex the thrown exception
+     * @return a 410 problem detail with {@code { "code": "GUEST_SESSION_EXPIRED" } }
+     */
+    @ExceptionHandler(GuestSessionExpiredException.class)
+    public ProblemDetail handleGuestSessionExpired(final GuestSessionExpiredException ex) {
+        ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.GONE);
+        problem.setTitle("Guest session expired");
+        problem.setProperties(Map.of("code", "GUEST_SESSION_EXPIRED"));
+        return problem;
+    }
+
+    /**
+     * Returns HTTP 403 Forbidden when a caller holding only an anonymous guest access grant
+     * attempts a facilitator-only action (US09.3.1) — see {@code
+     * fr.pivot.agilite.poker.ws.RoomAccessGrantService#requireNonGuest}.
+     *
+     * @param ex the thrown exception
+     * @return a 403 problem detail with {@code { "code": "FACILITATOR_ONLY_ACTION" } }
+     */
+    @ExceptionHandler(PokerFacilitatorOnlyException.class)
+    public ProblemDetail handlePokerFacilitatorOnly(final PokerFacilitatorOnlyException ex) {
+        ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.FORBIDDEN);
+        problem.setTitle("Facilitator only");
+        problem.setDetail(ex.getMessage());
+        problem.setProperties(Map.of("code", "FACILITATOR_ONLY_ACTION"));
         return problem;
     }
 

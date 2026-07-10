@@ -1,5 +1,6 @@
 package fr.pivot.agilite.poker.ws;
 
+import fr.pivot.agilite.poker.exception.PokerFacilitatorOnlyException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -39,6 +40,14 @@ import java.util.UUID;
  * <p>Grants expire automatically via the Redis key TTL passed to {@link #grantAccess} — callers
  * are expected to align this with the room's own configured expiration (ADR-026: 24h default),
  * so no explicit revocation API is needed for the room-isolation guarantee itself.
+ *
+ * <p><strong>Guest (anonymous) grants — US09.3.1:</strong> {@link #grantGuestAccess} issues the
+ * exact same kind of grant as {@link #grantAccess} — same key shape, same TTL semantics, checked
+ * by the exact same {@link #hasAccess} used for SUBSCRIBE/SEND authorization (EN09.1) — the only
+ * difference is the Redis value stored, which {@link #isGuest} reads back. This is deliberate:
+ * an anonymous guest must be exactly as authorized as an authenticated participant for generic
+ * room access (voting, receiving broadcasts, US09.2.1) — the two paths diverge only for
+ * facilitator-only actions, via {@link #requireNonGuest}.
  */
 @Service
 public class RoomAccessGrantService {
@@ -50,6 +59,13 @@ public class RoomAccessGrantService {
 
     /** Value stored for a granted key — presence of the key is what matters, not its content. */
     private static final String GRANTED_VALUE = "1";
+
+    /**
+     * Value stored for a grant issued to an anonymous guest (US09.3.1) — distinguishes it from
+     * {@link #GRANTED_VALUE} for {@link #isGuest}, while remaining an ordinary present key for
+     * {@link #hasAccess} (generic room access never distinguishes the two).
+     */
+    private static final String GUEST_VALUE = "guest";
 
     private final StringRedisTemplate redisTemplate;
 
@@ -104,6 +120,60 @@ public class RoomAccessGrantService {
     public void revokeAccess(final UUID roomId, final String accessToken) {
         redisTemplate.delete(grantKey(roomId, accessToken));
         LOG.info("Room access revoked: room={}", roomId);
+    }
+
+    /**
+     * Grants an anonymous guest access to a room for the given duration (US09.3.1).
+     *
+     * <p>Authorizes exactly the same generic room access as {@link #grantAccess} (checked by the
+     * same {@link #hasAccess}) — the only difference is that {@link #isGuest} subsequently
+     * reports {@code true} for this exact {@code (roomId, accessToken)} pair, so a
+     * facilitator-only action can reject it via {@link #requireNonGuest}. Idempotent, same as
+     * {@link #grantAccess}.
+     *
+     * @param roomId      the room's identifier
+     * @param accessToken the opaque access token minted for this anonymous guest
+     * @param ttl         how long the grant remains valid — capped at 2h from issuance by the
+     *                    caller (ADR-026 §2 inactivity window), never enforced here
+     */
+    public void grantGuestAccess(final UUID roomId, final String accessToken, final Duration ttl) {
+        String key = grantKey(roomId, accessToken);
+        redisTemplate.opsForValue().set(key, GUEST_VALUE, ttl);
+        LOG.info("Guest room access granted: room={} ttlSeconds={}", roomId, ttl.toSeconds());
+    }
+
+    /**
+     * Checks whether the currently valid grant for this room/access-token pair was issued to an
+     * anonymous guest (US09.3.1) rather than an authenticated participant.
+     *
+     * @param roomId      the room's identifier
+     * @param accessToken the access token presented by the client, or {@code null}/blank if none
+     * @return {@code true} if a non-expired guest grant exists for this exact pair; {@code false}
+     *         if there is no grant at all, or the grant is a standard (non-guest) one
+     */
+    public boolean isGuest(final UUID roomId, final String accessToken) {
+        if (accessToken == null || accessToken.isBlank()) {
+            return false;
+        }
+        String value = redisTemplate.opsForValue().get(grantKey(roomId, accessToken));
+        return GUEST_VALUE.equals(value);
+    }
+
+    /**
+     * Rejects an anonymous guest attempting a facilitator-only action (US09.3.1) — the primitive
+     * that sibling US09.2.1 (ticket creation) / US09.2.2 (reveal) must call once their own
+     * facilitator-only actions exist (see this class's own JavaDoc precedent: {@link
+     * #grantAccess}/{@link #hasAccess} defined this same contract before US09.1.2, their first
+     * real caller, existed).
+     *
+     * @param roomId      the room's identifier
+     * @param accessToken the access token presented by the caller
+     * @throws PokerFacilitatorOnlyException if this exact pair currently holds a guest grant
+     */
+    public void requireNonGuest(final UUID roomId, final String accessToken) {
+        if (isGuest(roomId, accessToken)) {
+            throw new PokerFacilitatorOnlyException(roomId);
+        }
     }
 
     /**
