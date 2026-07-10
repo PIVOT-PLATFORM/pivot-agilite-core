@@ -112,14 +112,15 @@ public class PokerRoomService {
      */
     @Transactional
     public JoinRoomResponse join(final String code, final Long tenantId) {
+        final Instant now = clock.instant();
         final PokerRoom room = repository.findByInviteCode(code)
                 .filter(candidate -> candidate.getTenantId().equals(tenantId))
                 .filter(PokerRoom::isActive)
-                .filter(candidate -> candidate.getExpiresAt().isAfter(clock.instant()))
+                .filter(candidate -> candidate.getExpiresAt().isAfter(now))
                 .orElseThrow(InviteCodeNotFoundException::new);
 
         final String accessToken = UUID.randomUUID().toString();
-        final Duration ttl = Duration.between(clock.instant(), room.getExpiresAt());
+        final Duration ttl = Duration.between(now, room.getExpiresAt());
         roomAccessGrantService.grantAccess(room.getId(), accessToken, ttl);
 
         return new JoinRoomResponse(
