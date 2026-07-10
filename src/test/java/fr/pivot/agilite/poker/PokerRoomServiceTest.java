@@ -1,7 +1,10 @@
 package fr.pivot.agilite.poker;
 
+import fr.pivot.agilite.poker.dto.AnonymousJoinResponse;
+import fr.pivot.agilite.poker.dto.GuestHeartbeatResponse;
 import fr.pivot.agilite.poker.dto.JoinRoomResponse;
 import fr.pivot.agilite.poker.dto.RoomResponse;
+import fr.pivot.agilite.poker.exception.GuestSessionExpiredException;
 import fr.pivot.agilite.poker.exception.InviteCodeNotFoundException;
 import fr.pivot.agilite.poker.exception.RoomNotFoundException;
 import fr.pivot.agilite.poker.ws.RoomAccessGrantService;
@@ -283,6 +286,168 @@ class PokerRoomServiceTest {
         assertThatThrownBy(() -> service.join("ABC234", 3L))
                 .isInstanceOf(InviteCodeNotFoundException.class);
         verifyNoInteractions(roomAccessGrantService);
+    }
+
+    // -------------------------------------------------------------------------
+    // joinAnonymous / refreshGuestSession (US09.3.1)
+    // -------------------------------------------------------------------------
+
+    /**
+     * Given a valid, active, non-expired invite code, when an anonymous caller joins with no
+     * pseudonym, then a guest access grant is minted (not a standard one), a temporary
+     * {@code sessionId} is generated, and a default pseudonym of the shape {@code "Invité-XXXX"}
+     * is returned.
+     */
+    @Test
+    void joinAnonymous_validCode_grantsGuestAccessAndGeneratesPseudonym() {
+        // Room expires in 3h — well past the 2h guest cap, so the cap (not the room's own
+        // expiry) is what should apply here; the room-expiring-soon case is covered separately
+        // by joinAnonymous_roomExpiringSoon_capsGuestSessionAtRoomExpiry below.
+        Instant expiresAt = FIXED_NOW.plusSeconds(10_800);
+        PokerRoom room = new PokerRoom(3L, 7L, "Sprint 8", "ABC234", FIXED_NOW, expiresAt);
+        setId(room, ROOM_ID);
+        when(repository.findByInviteCode("ABC234")).thenReturn(Optional.of(room));
+
+        AnonymousJoinResponse response = service.joinAnonymous("ABC234", null);
+
+        assertThat(response.roomId()).isEqualTo(ROOM_ID);
+        assertThat(response.name()).isEqualTo("Sprint 8");
+        assertThat(response.accessToken()).isNotBlank();
+        assertThat(response.sessionId()).isNotBlank();
+        assertThat(response.pseudonym()).startsWith("Invité-");
+        assertThat(response.guestSessionExpiresAt()).isEqualTo(FIXED_NOW.plus(Duration.ofHours(2)));
+
+        verify(roomAccessGrantService)
+                .grantGuestAccess(eq(ROOM_ID), anyString(), eq(Duration.ofHours(2)));
+    }
+
+    /**
+     * Given a caller-supplied pseudonym, when joining anonymously, then the response carries
+     * that exact (trimmed) pseudonym, not a generated one.
+     */
+    @Test
+    void joinAnonymous_withPseudonym_returnsTrimmedPseudonym() {
+        PokerRoom room = new PokerRoom(3L, 7L, "Room", "ABC234", FIXED_NOW, FIXED_NOW.plusSeconds(3600));
+        setId(room, ROOM_ID);
+        when(repository.findByInviteCode("ABC234")).thenReturn(Optional.of(room));
+
+        AnonymousJoinResponse response = service.joinAnonymous("ABC234", "  Alex  ");
+
+        assertThat(response.pseudonym()).isEqualTo("Alex");
+    }
+
+    /**
+     * Given a room expiring in less than 2h, when joining anonymously, then the guest session
+     * expiry is capped at the room's own {@code expiresAt} — never later, so a guest session can
+     * never outlive its room.
+     */
+    @Test
+    void joinAnonymous_roomExpiringSoon_capsGuestSessionAtRoomExpiry() {
+        Instant expiresAt = FIXED_NOW.plusSeconds(600);
+        PokerRoom room = new PokerRoom(3L, 7L, "Room", "ABC234", FIXED_NOW, expiresAt);
+        setId(room, ROOM_ID);
+        when(repository.findByInviteCode("ABC234")).thenReturn(Optional.of(room));
+
+        AnonymousJoinResponse response = service.joinAnonymous("ABC234", null);
+
+        assertThat(response.guestSessionExpiresAt()).isEqualTo(expiresAt);
+        verify(roomAccessGrantService)
+                .grantGuestAccess(eq(ROOM_ID), anyString(), eq(Duration.ofSeconds(600)));
+    }
+
+    /**
+     * Error case: given an invite code that matches no room, when joining anonymously, then
+     * {@link InviteCodeNotFoundException} is thrown and no guest grant is ever issued — same
+     * unified 404 posture as the authenticated join (US09.1.2).
+     */
+    @Test
+    void joinAnonymous_unknownCode_throwsInviteCodeNotFoundException() {
+        when(repository.findByInviteCode("ZZZZZZ")).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.joinAnonymous("ZZZZZZ", null))
+                .isInstanceOf(InviteCodeNotFoundException.class);
+        verifyNoInteractions(roomAccessGrantService);
+    }
+
+    /**
+     * Error case: given a deactivated room's code, when joining anonymously, then {@link
+     * InviteCodeNotFoundException} is thrown and no guest grant is issued.
+     */
+    @Test
+    void joinAnonymous_inactiveRoomCode_throwsInviteCodeNotFoundException() {
+        PokerRoom room = new PokerRoom(3L, 7L, "Room", "ABC234", FIXED_NOW, FIXED_NOW.plusSeconds(3600));
+        setId(room, ROOM_ID);
+        setActive(room, false);
+        when(repository.findByInviteCode("ABC234")).thenReturn(Optional.of(room));
+
+        assertThatThrownBy(() -> service.joinAnonymous("ABC234", null))
+                .isInstanceOf(InviteCodeNotFoundException.class);
+        verifyNoInteractions(roomAccessGrantService);
+    }
+
+    /**
+     * Error case: given an expired room's code, when joining anonymously, then {@link
+     * InviteCodeNotFoundException} is thrown and no guest grant is issued.
+     */
+    @Test
+    void joinAnonymous_expiredRoomCode_throwsInviteCodeNotFoundException() {
+        PokerRoom room = new PokerRoom(
+                3L, 7L, "Room", "ABC234", FIXED_NOW.minusSeconds(7200), FIXED_NOW.minusSeconds(3600));
+        setId(room, ROOM_ID);
+        when(repository.findByInviteCode("ABC234")).thenReturn(Optional.of(room));
+
+        assertThatThrownBy(() -> service.joinAnonymous("ABC234", null))
+                .isInstanceOf(InviteCodeNotFoundException.class);
+        verifyNoInteractions(roomAccessGrantService);
+    }
+
+    /**
+     * Given a currently valid guest session, when the heartbeat is called, then the guest grant
+     * is refreshed (re-granted with a recomputed TTL) and the new expiry is returned.
+     */
+    @Test
+    void refreshGuestSession_validSession_refreshesGrantAndReturnsNewExpiry() {
+        Instant expiresAt = FIXED_NOW.plusSeconds(7200);
+        PokerRoom room = new PokerRoom(3L, 7L, "Room", "ABC234", FIXED_NOW, expiresAt);
+        setId(room, ROOM_ID);
+        when(roomAccessGrantService.isGuest(ROOM_ID, "guest-token")).thenReturn(true);
+        when(repository.findById(ROOM_ID)).thenReturn(Optional.of(room));
+
+        GuestHeartbeatResponse response = service.refreshGuestSession(ROOM_ID, "guest-token");
+
+        assertThat(response.expiresAt()).isEqualTo(FIXED_NOW.plus(Duration.ofHours(2)));
+        verify(roomAccessGrantService)
+                .grantGuestAccess(ROOM_ID, "guest-token", Duration.ofHours(2));
+    }
+
+    /**
+     * Error case: given a token that does not currently hold a guest grant (never issued,
+     * already expired, or belongs to another room), when the heartbeat is called, then {@link
+     * GuestSessionExpiredException} is thrown — a clear error, not a silent no-op.
+     */
+    @Test
+    void refreshGuestSession_notAGuestGrant_throwsGuestSessionExpiredException() {
+        when(roomAccessGrantService.isGuest(ROOM_ID, "unknown-token")).thenReturn(false);
+
+        assertThatThrownBy(() -> service.refreshGuestSession(ROOM_ID, "unknown-token"))
+                .isInstanceOf(GuestSessionExpiredException.class);
+    }
+
+    /**
+     * Error case: given a guest grant whose room has since been deactivated or expired, when the
+     * heartbeat is called, then {@link GuestSessionExpiredException} is thrown — the session
+     * cannot outlive its room, ever.
+     */
+    @Test
+    void refreshGuestSession_roomNoLongerActive_throwsGuestSessionExpiredException() {
+        PokerRoom room = new PokerRoom(3L, 7L, "Room", "ABC234", FIXED_NOW, FIXED_NOW.plusSeconds(3600));
+        setId(room, ROOM_ID);
+        setActive(room, false);
+        when(roomAccessGrantService.isGuest(ROOM_ID, "guest-token")).thenReturn(true);
+        when(repository.findById(ROOM_ID)).thenReturn(Optional.of(room));
+
+        assertThatThrownBy(() -> service.refreshGuestSession(ROOM_ID, "guest-token"))
+                .isInstanceOf(GuestSessionExpiredException.class);
     }
 
     private static void setActive(final PokerRoom room, final boolean active) {
