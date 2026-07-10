@@ -81,6 +81,8 @@ public final class PlatformAuthTestSupport {
                         email VARCHAR(320) NOT NULL,
                         role VARCHAR(50) NOT NULL DEFAULT 'ROLE_USER',
                         is_active BOOLEAN NOT NULL DEFAULT true,
+                        first_name VARCHAR(100),
+                        last_name VARCHAR(100),
                         created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
                         updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
                     )
@@ -152,7 +154,7 @@ public final class PlatformAuthTestSupport {
     }
 
     /**
-     * Inserts a user row.
+     * Inserts a user row with a random email and no first/last name.
      *
      * @param jdbcUrl  the JDBC URL
      * @param username the database username
@@ -165,14 +167,36 @@ public final class PlatformAuthTestSupport {
     public static long seedUser(
             final String jdbcUrl, final String username, final String password,
             final long tenantId, final boolean active) throws SQLException {
+        return seedUser(jdbcUrl, username, password, tenantId, active, null, null);
+    }
+
+    /**
+     * Inserts a user row, optionally with a first/last name (for display-name resolution tests).
+     *
+     * @param jdbcUrl   the JDBC URL
+     * @param username  the database username
+     * @param password  the database password
+     * @param tenantId  the owning tenant's id
+     * @param active    the {@code is_active} value
+     * @param firstName the user's first name, or {@code null}
+     * @param lastName  the user's last name, or {@code null}
+     * @return the generated {@code public.users.id}
+     * @throws SQLException if the insert fails
+     */
+    public static long seedUser(
+            final String jdbcUrl, final String username, final String password,
+            final long tenantId, final boolean active,
+            final String firstName, final String lastName) throws SQLException {
         final String email = UUID.randomUUID() + "@pivot.invalid";
-        final String sql = "INSERT INTO public.users (tenant_id, email, role, is_active) "
-                + "VALUES (?, ?, 'ROLE_USER', ?) RETURNING id";
+        final String sql = "INSERT INTO public.users (tenant_id, email, role, is_active, first_name, last_name) "
+                + "VALUES (?, ?, 'ROLE_USER', ?, ?, ?) RETURNING id";
         try (Connection conn = DriverManager.getConnection(jdbcUrl, username, password);
                 PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setLong(1, tenantId);
             ps.setString(2, email);
             ps.setBoolean(3, active);
+            ps.setString(4, firstName);
+            ps.setString(5, lastName);
             try (ResultSet rs = ps.executeQuery()) {
                 rs.next();
                 return rs.getLong(1);
@@ -245,18 +269,22 @@ public final class PlatformAuthTestSupport {
      * @param username the database username
      * @param password the database password
      * @param teamId   the team's id
-     * @param userId   the user's id
+     * @param userId   the member's user id
+     * @return the generated {@code public.team_members.id}
      * @throws SQLException if the insert fails
      */
-    public static void seedTeamMember(
+    public static long seedTeamMember(
             final String jdbcUrl, final String username, final String password,
             final long teamId, final long userId) throws SQLException {
-        final String sql = "INSERT INTO public.team_members (team_id, user_id) VALUES (?, ?)";
+        final String sql = "INSERT INTO public.team_members (team_id, user_id) VALUES (?, ?) RETURNING id";
         try (Connection conn = DriverManager.getConnection(jdbcUrl, username, password);
                 PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setLong(1, teamId);
             ps.setLong(2, userId);
-            ps.executeUpdate();
+            try (ResultSet rs = ps.executeQuery()) {
+                rs.next();
+                return rs.getLong(1);
+            }
         }
     }
 
@@ -276,7 +304,28 @@ public final class PlatformAuthTestSupport {
         final long userId = seedUser(jdbcUrl, username, password, tenantId, true);
         final String token = issueToken(
                 jdbcUrl, username, password, userId, "active", Instant.now().plusSeconds(3600));
-        return new AuthFixture(tenantId, userId, token);
+        return new AuthFixture(tenantId, userId, null, null, token);
+    }
+
+    /**
+     * Convenience one-shot: seeds an active tenant, an active user in it, a team, the user's
+     * membership in that team, and a valid (non-expired, {@code active}) token for that user.
+     *
+     * @param jdbcUrl  the JDBC URL
+     * @param username the database username
+     * @param password the database password
+     * @return the seeded fixture (tenant id, user id, team id, team-member id, raw bearer token)
+     * @throws SQLException if any insert fails
+     */
+    public static AuthFixture seedActiveUserWithTeamAndToken(
+            final String jdbcUrl, final String username, final String password) throws SQLException {
+        final long tenantId = seedTenant(jdbcUrl, username, password, null);
+        final long userId = seedUser(jdbcUrl, username, password, tenantId, true);
+        final long teamId = seedTeam(jdbcUrl, username, password, tenantId, "team-" + UUID.randomUUID());
+        final long teamMemberId = seedTeamMember(jdbcUrl, username, password, teamId, userId);
+        final String token = issueToken(
+                jdbcUrl, username, password, userId, "active", Instant.now().plusSeconds(3600));
+        return new AuthFixture(tenantId, userId, teamId, teamMemberId, token);
     }
 
     /**
@@ -297,13 +346,17 @@ public final class PlatformAuthTestSupport {
     }
 
     /**
-     * A seeded tenant/user/token triple ready to use as an {@code Authorization: Bearer} header.
+     * A seeded tenant/user/token fixture ready to use as an {@code Authorization: Bearer}
+     * header — {@code teamId}/{@code teamMemberId} are {@code null} unless seeded via
+     * {@link #seedActiveUserWithTeamAndToken(String, String, String)}.
      *
-     * @param tenantId the seeded tenant's {@code public.tenants.id}
-     * @param userId   the seeded user's {@code public.users.id}
-     * @param rawToken the raw bearer token — use as {@code "Bearer " + rawToken}
+     * @param tenantId     the seeded tenant's {@code public.tenants.id}
+     * @param userId       the seeded user's {@code public.users.id}
+     * @param teamId       the seeded team's {@code public.teams.id}, or {@code null}
+     * @param teamMemberId the seeded membership's {@code public.team_members.id}, or {@code null}
+     * @param rawToken     the raw bearer token — use as {@code "Bearer " + rawToken}
      */
-    public record AuthFixture(long tenantId, long userId, String rawToken) {
+    public record AuthFixture(long tenantId, long userId, Long teamId, Long teamMemberId, String rawToken) {
 
         /**
          * @return the value to send as the {@code Authorization} header

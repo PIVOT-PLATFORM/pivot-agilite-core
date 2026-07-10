@@ -7,13 +7,13 @@ import jakarta.persistence.Table;
 
 /**
  * Read-only mirror of {@code public.users}, owned and written exclusively by {@code pivot-core}
- * — never persisted, updated, or deleted from this repo (EN08.3, ADR-022).
+ * — never persisted, updated, or deleted from this repo (EN08.3, US14.1.1, ADR-022).
  *
- * <p>Mapped explicitly to schema {@code public}. Deliberately excludes every profile field
- * (email, password hash, locale, avatar…) — this repo only needs {@code tenant_id}, {@code
- * role}, and {@code is_active} to validate a bearer token and resolve the minimal {@code
- * AuthenticatedPrincipal}, mirroring the same exclusion already made by {@code
- * fr.pivot.core.auth.AuthenticatedPrincipal} itself.
+ * <p>Mapped explicitly to schema {@code public}. Unlike {@code pivot-collaboratif-core}'s
+ * equivalent (which excludes every profile field), this module also maps {@code first_name},
+ * {@code last_name} and {@code email} — needed to resolve a {@code team_member} wheel entry's
+ * display name (US14.1.1) — in addition to {@code tenant_id}/{@code role}/{@code is_active}
+ * needed to validate a bearer token and resolve the minimal {@code AuthenticatedPrincipal}.
  */
 @Entity
 @Table(schema = "public", name = "users")
@@ -30,6 +30,15 @@ public class PlatformUser {
 
     @Column(name = "is_active", nullable = false)
     private boolean active;
+
+    @Column(name = "first_name")
+    private String firstName;
+
+    @Column(name = "last_name")
+    private String lastName;
+
+    @Column(name = "email", nullable = false, length = 320)
+    private String email;
 
     /** No-argument constructor required by JPA. */
     protected PlatformUser() {
@@ -53,5 +62,20 @@ public class PlatformUser {
     /** @return {@code true} unless an admin has deactivated this account */
     public boolean isActive() {
         return active;
+    }
+
+    /** @return the user's first name, or {@code null} if never set */
+    public String getFirstName() {
+        return firstName;
+    }
+
+    /** @return the user's last name, or {@code null} if never set */
+    public String getLastName() {
+        return lastName;
+    }
+
+    /** @return the user's email address */
+    public String getEmail() {
+        return email;
     }
 }
