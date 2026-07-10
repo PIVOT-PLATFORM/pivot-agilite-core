@@ -37,9 +37,11 @@ import java.util.Map;
  * WheelNotFoundException}, {@link TeamNotFoundException}, {@link WheelValidationException}), the
  * US14.2.1 weighted anti-repeat draw's defensive empty-wheel guard ({@link
  * WheelEmptyException}), anonymous guest participation exceptions (US09.3.1, {@link
- * GuestSessionExpiredException}, {@link PokerFacilitatorOnlyException}), as well as Spring MVC/
- * Bean Validation failures ({@link MethodArgumentNotValidException}, {@link
- * ConstraintViolationException}).
+ * GuestSessionExpiredException}, {@link PokerFacilitatorOnlyException}), retro action
+ * lookup/validation exceptions (US20.3.1, {@link RetroActionNotFoundException}, {@link
+ * RetroActionOwnerNotTeamMemberException}, {@link RetroActionSourceCardMismatchException}, {@link
+ * InvalidRetroActionStatusException}), as well as Spring MVC/ Bean Validation failures ({@link
+ * MethodArgumentNotValidException}, {@link ConstraintViolationException}).
  */
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -343,6 +345,71 @@ public class GlobalExceptionHandler {
         ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.BAD_REQUEST);
         problem.setTitle("Custom format id not allowed");
         problem.setProperties(Map.of("code", "CUSTOM_FORMAT_ID_NOT_ALLOWED"));
+        return problem;
+    }
+
+    /**
+     * Returns HTTP 404 when a retro action is not found, belongs to another tenant, or belongs to
+     * a team the caller is not a member of (US20.3.1) — collapsing all three into the same
+     * response, never a 403 (this US's AC explicitly rules out confirming cross-tenant/cross-team
+     * existence).
+     *
+     * @param ex the thrown exception
+     * @return a 404 problem detail
+     */
+    @ExceptionHandler(RetroActionNotFoundException.class)
+    public ProblemDetail handleRetroActionNotFound(final RetroActionNotFoundException ex) {
+        ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.NOT_FOUND);
+        problem.setTitle("Retro action not found");
+        problem.setDetail(ex.getMessage());
+        return problem;
+    }
+
+    /**
+     * Returns HTTP 400 when a retro action's {@code ownerUserId} does not resolve to a member of
+     * the session's team (US20.3.1).
+     *
+     * @param ex the thrown exception
+     * @return a 400 problem detail with {@code { "code": "OWNER_NOT_TEAM_MEMBER" } }
+     */
+    @ExceptionHandler(RetroActionOwnerNotTeamMemberException.class)
+    public ProblemDetail handleRetroActionOwnerNotTeamMember(final RetroActionOwnerNotTeamMemberException ex) {
+        ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.BAD_REQUEST);
+        problem.setTitle("Owner not a team member");
+        problem.setDetail(ex.getMessage());
+        problem.setProperties(Map.of("code", "OWNER_NOT_TEAM_MEMBER"));
+        return problem;
+    }
+
+    /**
+     * Returns HTTP 400 when a retro action's {@code sourceCardId} does not resolve to a card
+     * belonging to the target session (US20.3.1).
+     *
+     * @param ex the thrown exception
+     * @return a 400 problem detail with {@code { "code": "SOURCE_CARD_NOT_IN_SESSION" } }
+     */
+    @ExceptionHandler(RetroActionSourceCardMismatchException.class)
+    public ProblemDetail handleRetroActionSourceCardMismatch(final RetroActionSourceCardMismatchException ex) {
+        ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.BAD_REQUEST);
+        problem.setTitle("Source card not in session");
+        problem.setDetail(ex.getMessage());
+        problem.setProperties(Map.of("code", "SOURCE_CARD_NOT_IN_SESSION"));
+        return problem;
+    }
+
+    /**
+     * Returns HTTP 400 with a machine-readable {@code code} property when a retro action {@code
+     * status} value (PATCH body, or the GET list's optional filter) does not match any known
+     * {@link fr.pivot.agilite.retro.action.RetroActionStatus} value (US20.3.1).
+     *
+     * @param ex the thrown exception
+     * @return a 400 problem detail with {@code { "code": "INVALID_ACTION_STATUS" } }
+     */
+    @ExceptionHandler(InvalidRetroActionStatusException.class)
+    public ProblemDetail handleInvalidRetroActionStatus(final InvalidRetroActionStatusException ex) {
+        ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.BAD_REQUEST);
+        problem.setTitle("Invalid retro action status");
+        problem.setProperties(Map.of("code", "INVALID_ACTION_STATUS"));
         return problem;
     }
 
