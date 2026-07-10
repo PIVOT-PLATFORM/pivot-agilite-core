@@ -259,7 +259,7 @@ class RetroCardServiceTest {
     private static RetroSession contributionSession() {
         return new RetroSession(
                 7L, 1L, "Sprint Retro", fr.pivot.agilite.retro.session.RetroFormat.START_STOP_CONTINUE,
-                null, 99L, "ABC123", null, null, null, 3,
+                null, null, 99L, "ABC123", null, null, null, 3,
                 NOW.plusSeconds(3600), NOW);
     }
 }

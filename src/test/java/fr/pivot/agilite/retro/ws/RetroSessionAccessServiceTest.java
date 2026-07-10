@@ -181,7 +181,7 @@ class RetroSessionAccessServiceTest {
     @Test
     void join_expiredSession_throwsExpired() {
         RetroSession session = new RetroSession(
-                TENANT_ID, 1L, "Sprint Retro", RetroFormat.START_STOP_CONTINUE, null,
+                TENANT_ID, 1L, "Sprint Retro", RetroFormat.START_STOP_CONTINUE, null, null,
                 FACILITATOR_ID, "ABC123", null, null, null, 3,
                 NOW.minusSeconds(60), NOW.minusSeconds(3600));
         when(sessionRepository.findById(session.getId())).thenReturn(Optional.of(session));
@@ -192,7 +192,7 @@ class RetroSessionAccessServiceTest {
 
     private static RetroSession session() {
         RetroSession session = new RetroSession(
-                TENANT_ID, 1L, "Sprint Retro", RetroFormat.START_STOP_CONTINUE, null,
+                TENANT_ID, 1L, "Sprint Retro", RetroFormat.START_STOP_CONTINUE, null, null,
                 FACILITATOR_ID, "ABC123", null, null, null, 3,
                 NOW.plusSeconds(3600), NOW.minusSeconds(60));
         // id is normally only assigned by JPA on persist; force-set so session.getId() is
