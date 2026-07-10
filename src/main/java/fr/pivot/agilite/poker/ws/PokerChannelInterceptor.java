@@ -70,8 +70,17 @@ public class PokerChannelInterceptor implements ChannelInterceptor {
 
     private static final Logger LOG = LoggerFactory.getLogger(PokerChannelInterceptor.class);
 
-    /** Native STOMP header carrying the room access grant token. */
-    static final String ACCESS_TOKEN_HEADER = "access-token";
+    /**
+     * Native STOMP header carrying the room access grant token.
+     *
+     * <p>{@code public} (widened for US09.2.1) — consumed from {@code
+     * fr.pivot.agilite.poker.vote.ws.PokerVoteWsController}, a sibling package to this one,
+     * mirroring the identical {@code public}/cross-package precedent already established by
+     * {@code RetroChannelInterceptor#ACCESS_TOKEN_HEADER} (consumed from {@code
+     * fr.pivot.agilite.retro.card.ws.RetroCardWsController}, US20.1.2a). Visibility widening
+     * only — no behavior change.
+     */
+    public static final String ACCESS_TOKEN_HEADER = "access-token";
 
     /** Redis key prefix for per-room per-token rate-limit counters. */
     private static final String RATE_KEY_PREFIX = "poker:ws:rate:";

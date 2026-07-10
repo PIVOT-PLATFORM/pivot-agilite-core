@@ -14,6 +14,13 @@ import java.util.UUID;
  * PokerRoomDestinations#roomTopic(UUID)} — the single source of truth for this destination
  * naming, already fixed by ADR-026 §2 for US09.1.2 ({@code /topic/agilite/poker/{roomId}}).
  *
+ * <p>{@code accessToken} (US09.2.1) is populated <strong>only</strong> on the {@code POST}
+ * (creation) response — the facilitator's own room access grant, minted at the same time as the
+ * room itself, mirroring what {@code PokerRoomService#join} already does for a joining
+ * participant. {@code GET /poker/rooms/{roomId}} always returns {@code null} here: re-minting a
+ * fresh grant on every read would be a needless, unbounded-refresh side effect for a caller who
+ * may not even be the facilitator (that endpoint has no facilitator-only restriction).
+ *
  * @param id                room primary key
  * @param name              room display name
  * @param inviteCode        6-character invite code
@@ -24,6 +31,8 @@ import java.util.UUID;
  * @param createdAt         creation timestamp
  * @param expiresAt         expiry timestamp
  * @param wsTopic           the STOMP destination this room's participants subscribe to
+ * @param accessToken       the facilitator's own room-scoped WebSocket access token, present only
+ *                          on the creation response ({@code null} on {@code GET})
  */
 public record RoomResponse(
         UUID id,
@@ -35,5 +44,6 @@ public record RoomResponse(
         boolean active,
         Instant createdAt,
         Instant expiresAt,
-        String wsTopic) {
+        String wsTopic,
+        String accessToken) {
 }

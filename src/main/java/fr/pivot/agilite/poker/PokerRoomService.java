@@ -7,6 +7,7 @@ import fr.pivot.agilite.poker.dto.RoomResponse;
 import fr.pivot.agilite.poker.exception.GuestSessionExpiredException;
 import fr.pivot.agilite.poker.exception.InviteCodeNotFoundException;
 import fr.pivot.agilite.poker.exception.RoomNotFoundException;
+import fr.pivot.agilite.poker.ws.PokerParticipantRegistryService;
 import fr.pivot.agilite.poker.ws.PokerRoomDestinations;
 import fr.pivot.agilite.poker.ws.RoomAccessGrantService;
 import org.springframework.beans.factory.annotation.Value;
@@ -49,39 +50,50 @@ public class PokerRoomService {
     private final Clock clock;
     private final int defaultExpirationHours;
     private final RoomAccessGrantService roomAccessGrantService;
+    private final PokerParticipantRegistryService participantRegistryService;
 
     /**
      * Constructs the service.
      *
-     * @param repository             the room persistence repository
-     * @param clock                  the clock used to timestamp rooms (overridable in tests)
-     * @param defaultExpirationHours the default room lifetime in hours when the caller omits
-     *                               {@code expirationHours} (property {@code
-     *                               pivot.agilite.poker.room.default-expiration-hours}, 24 by
-     *                               default)
-     * @param roomAccessGrantService issues the room-scoped WebSocket access grant minted on a
-     *                               successful join (US09.1.2)
+     * @param repository                 the room persistence repository
+     * @param clock                      the clock used to timestamp rooms (overridable in tests)
+     * @param defaultExpirationHours     the default room lifetime in hours when the caller omits
+     *                                   {@code expirationHours} (property {@code
+     *                                   pivot.agilite.poker.room.default-expiration-hours}, 24 by
+     *                                   default)
+     * @param roomAccessGrantService     issues the room-scoped WebSocket access grant minted on a
+     *                                   successful join (US09.1.2) and, since US09.2.1, on room
+     *                                   creation for the facilitator too
+     * @param participantRegistryService registers every facilitator/participant into the room's
+     *                                   presence roster (US09.2.1), backing the live "X/Y have
+     *                                   voted" counter's denominator
      */
     public PokerRoomService(
             final PokerRoomRepository repository,
             final Clock clock,
             @Value("${pivot.agilite.poker.room.default-expiration-hours:24}") final int defaultExpirationHours,
-            final RoomAccessGrantService roomAccessGrantService) {
+            final RoomAccessGrantService roomAccessGrantService,
+            final PokerParticipantRegistryService participantRegistryService) {
         this.repository = repository;
         this.clock = clock;
         this.defaultExpirationHours = defaultExpirationHours;
         this.roomAccessGrantService = roomAccessGrantService;
+        this.participantRegistryService = participantRegistryService;
     }
 
     /**
-     * Creates a new planning poker room. The caller becomes its facilitator automatically.
+     * Creates a new planning poker room. The caller becomes its facilitator automatically, and
+     * (since US09.2.1) is immediately granted their own room-scoped WebSocket access token and
+     * registered into the room's presence roster — mirroring what {@link #join} already does for
+     * a joining participant, so the facilitator can subscribe to {@code wsTopic}, create tickets'
+     * broadcasts, and vote themselves, without a separate join-by-code round trip.
      *
      * @param name              the room's display name (already validated by the controller)
      * @param facilitatorUserId the caller's user id, resolved server-side from the bearer token
      * @param tenantId          the caller's tenant id, resolved server-side from the bearer token
      * @param expirationHours   optional room lifetime in hours (1-168); {@code null} applies
      *                          {@link #defaultExpirationHours}
-     * @return the created room
+     * @return the created room, including the facilitator's freshly minted {@code accessToken}
      */
     @Transactional
     public RoomResponse create(
@@ -94,7 +106,14 @@ public class PokerRoomService {
         final String inviteCode = generateUniqueInviteCode();
         final PokerRoom room = new PokerRoom(
                 tenantId, facilitatorUserId, name, inviteCode, now, now.plus(hours, ChronoUnit.HOURS));
-        return toResponse(repository.save(room));
+        final PokerRoom saved = repository.save(room);
+
+        final String accessToken = UUID.randomUUID().toString();
+        final Duration ttl = Duration.between(now, saved.getExpiresAt());
+        roomAccessGrantService.grantAccess(saved.getId(), accessToken, ttl);
+        participantRegistryService.register(saved.getId(), accessToken, ttl);
+
+        return toResponse(saved, accessToken);
     }
 
     /**
@@ -109,7 +128,7 @@ public class PokerRoomService {
     public RoomResponse findById(final UUID roomId, final Long tenantId) {
         final PokerRoom room = repository.findByIdAndTenantId(roomId, tenantId)
                 .orElseThrow(() -> new RoomNotFoundException(roomId));
-        return toResponse(room);
+        return toResponse(room, null);
     }
 
     /**
@@ -139,6 +158,7 @@ public class PokerRoomService {
         final String accessToken = UUID.randomUUID().toString();
         final Duration ttl = Duration.between(now, room.getExpiresAt());
         roomAccessGrantService.grantAccess(room.getId(), accessToken, ttl);
+        participantRegistryService.register(room.getId(), accessToken, ttl);
 
         return new JoinRoomResponse(
                 room.getId(),
@@ -307,10 +327,13 @@ public class PokerRoomService {
     /**
      * Maps a persisted room to its API response shape.
      *
-     * @param room the persisted room
+     * @param room        the persisted room
+     * @param accessToken the facilitator's freshly minted access token (creation path), or
+     *                    {@code null} (read path, {@link #findById}) — see {@link RoomResponse}'s
+     *                    Javadoc for why the two paths differ
      * @return the corresponding {@link RoomResponse}
      */
-    private RoomResponse toResponse(final PokerRoom room) {
+    private RoomResponse toResponse(final PokerRoom room, final String accessToken) {
         return new RoomResponse(
                 room.getId(),
                 room.getName(),
@@ -321,6 +344,7 @@ public class PokerRoomService {
                 room.isActive(),
                 room.getCreatedAt(),
                 room.getExpiresAt(),
-                PokerRoomDestinations.roomTopic(room.getId()));
+                PokerRoomDestinations.roomTopic(room.getId()),
+                accessToken);
     }
 }

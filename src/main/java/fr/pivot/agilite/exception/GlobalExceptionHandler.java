@@ -1,9 +1,11 @@
 package fr.pivot.agilite.exception;
 
+import fr.pivot.agilite.poker.exception.ActiveTicketExistsException;
 import fr.pivot.agilite.poker.exception.GuestSessionExpiredException;
 import fr.pivot.agilite.poker.exception.InviteCodeNotFoundException;
 import fr.pivot.agilite.poker.exception.PokerFacilitatorOnlyException;
 import fr.pivot.agilite.poker.exception.RoomNotFoundException;
+import fr.pivot.agilite.poker.exception.TicketFacilitatorOnlyException;
 import jakarta.validation.ConstraintViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
@@ -25,7 +27,9 @@ import java.util.Map;
  * RetroCustomFormatIdRequiredException}, {@link RetroCustomFormatNotFoundException}, {@link
  * RetroCustomFormatIdNotAllowedException}), planning poker room lookup failures (US09.1.1, {@link
  * RoomNotFoundException}) and join-by-code failures (US09.1.2, {@link
- * InviteCodeNotFoundException}), wheel/team domain exceptions (US14.1.1, {@link
+ * InviteCodeNotFoundException}), ticket/vote facilitator and conflict failures (US09.2.1, {@link
+ * TicketFacilitatorOnlyException}, {@link ActiveTicketExistsException}), wheel/team domain
+ * exceptions (US14.1.1, {@link
  * WheelNotFoundException}, {@link TeamNotFoundException}, {@link WheelValidationException}), the
  * US14.2.1 weighted anti-repeat draw's defensive empty-wheel guard ({@link
  * WheelEmptyException}), anonymous guest participation exceptions (US09.3.1, {@link
@@ -101,6 +105,41 @@ public class GlobalExceptionHandler {
         problem.setTitle("Facilitator only");
         problem.setDetail(ex.getMessage());
         problem.setProperties(Map.of("code", "FACILITATOR_ONLY_ACTION"));
+        return problem;
+    }
+
+    /**
+     * Returns HTTP 403 when an authenticated, same-tenant caller attempts a facilitator-only
+     * planning poker ticket action (creating a ticket) but is not that room's facilitator
+     * (US09.2.1) — distinct from {@link PokerFacilitatorOnlyException} above (US09.3.1's
+     * guest-specific case, an account-less guest can never even reach this REST endpoint — see
+     * {@link TicketFacilitatorOnlyException}'s Javadoc).
+     *
+     * @param ex the thrown exception
+     * @return a 403 problem detail with {@code { "code": "FACILITATOR_ONLY" } }
+     */
+    @ExceptionHandler(TicketFacilitatorOnlyException.class)
+    public ProblemDetail handleTicketFacilitatorOnly(final TicketFacilitatorOnlyException ex) {
+        ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.FORBIDDEN);
+        problem.setTitle("Facilitator only");
+        problem.setDetail(ex.getMessage());
+        problem.setProperties(Map.of("code", "FACILITATOR_ONLY"));
+        return problem;
+    }
+
+    /**
+     * Returns HTTP 409 when a facilitator attempts to create a new ticket in a room that already
+     * has one currently open (US09.2.1).
+     *
+     * @param ex the thrown exception
+     * @return a 409 problem detail with {@code { "code": "ACTIVE_TICKET_EXISTS" } }
+     */
+    @ExceptionHandler(ActiveTicketExistsException.class)
+    public ProblemDetail handleActiveTicketExists(final ActiveTicketExistsException ex) {
+        ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.CONFLICT);
+        problem.setTitle("Active ticket exists");
+        problem.setDetail(ex.getMessage());
+        problem.setProperties(Map.of("code", "ACTIVE_TICKET_EXISTS"));
         return problem;
     }
 

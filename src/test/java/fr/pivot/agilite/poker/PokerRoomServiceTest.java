@@ -7,6 +7,7 @@ import fr.pivot.agilite.poker.dto.RoomResponse;
 import fr.pivot.agilite.poker.exception.GuestSessionExpiredException;
 import fr.pivot.agilite.poker.exception.InviteCodeNotFoundException;
 import fr.pivot.agilite.poker.exception.RoomNotFoundException;
+import fr.pivot.agilite.poker.ws.PokerParticipantRegistryService;
 import fr.pivot.agilite.poker.ws.RoomAccessGrantService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -47,12 +48,16 @@ class PokerRoomServiceTest {
     @Mock
     private RoomAccessGrantService roomAccessGrantService;
 
+    @Mock
+    private PokerParticipantRegistryService participantRegistryService;
+
     private PokerRoomService service;
 
     @BeforeEach
     void setUp() {
         Clock fixedClock = Clock.fixed(FIXED_NOW, ZoneOffset.UTC);
-        service = new PokerRoomService(repository, fixedClock, 24, roomAccessGrantService);
+        service = new PokerRoomService(
+                repository, fixedClock, 24, roomAccessGrantService, participantRegistryService);
     }
 
     /**
@@ -80,6 +85,30 @@ class PokerRoomServiceTest {
         assertThat(response.cardValues()).isEqualTo(PokerCardDeck.FIBONACCI_VALUES);
         assertThat(response.inviteCode()).hasSize(6);
         assertThat(response.wsTopic()).isEqualTo("/topic/agilite/poker/" + ROOM_ID);
+    }
+
+    /**
+     * US09.2.1: given a room is created, when the response is built, then the facilitator
+     * receives their own freshly minted, non-blank {@code accessToken} — a grant is issued and
+     * the facilitator is registered into the room's participant roster with a TTL matching the
+     * room's own expiry, exactly mirroring what {@link PokerRoomService#join} already does for a
+     * joining participant.
+     */
+    @Test
+    void create_mintsFacilitatorAccessTokenAndRegistersParticipant() {
+        when(repository.existsByInviteCode(anyString())).thenReturn(false);
+        when(repository.save(any(PokerRoom.class))).thenAnswer(invocation -> {
+            PokerRoom room = invocation.getArgument(0);
+            setId(room, ROOM_ID);
+            return room;
+        });
+
+        RoomResponse response = service.create("Sprint 8 estimation", 7L, 3L, 1);
+
+        assertThat(response.accessToken()).isNotBlank();
+        Duration expectedTtl = Duration.ofHours(1);
+        verify(roomAccessGrantService).grantAccess(eq(ROOM_ID), anyString(), eq(expectedTtl));
+        verify(participantRegistryService).register(eq(ROOM_ID), anyString(), eq(expectedTtl));
     }
 
     /**
@@ -146,6 +175,9 @@ class PokerRoomServiceTest {
 
         assertThat(response.id()).isEqualTo(ROOM_ID);
         assertThat(response.wsTopic()).isEqualTo("/topic/agilite/poker/" + ROOM_ID);
+        assertThat(response.accessToken())
+                .as("GET must never re-mint a facilitator grant — only the creation response does")
+                .isNull();
     }
 
     /**
@@ -210,6 +242,8 @@ class PokerRoomServiceTest {
         Duration expectedTtl = Duration.between(FIXED_NOW, expiresAt);
         verify(roomAccessGrantService)
                 .grantAccess(eq(ROOM_ID), anyString(), eq(expectedTtl));
+        verify(participantRegistryService)
+                .register(eq(ROOM_ID), anyString(), eq(expectedTtl));
     }
 
     /**
@@ -223,6 +257,7 @@ class PokerRoomServiceTest {
         assertThatThrownBy(() -> service.join("ZZZZZZ", 3L))
                 .isInstanceOf(InviteCodeNotFoundException.class);
         verifyNoInteractions(roomAccessGrantService);
+        verifyNoInteractions(participantRegistryService);
     }
 
     /**
@@ -239,6 +274,7 @@ class PokerRoomServiceTest {
         assertThatThrownBy(() -> service.join("ABC234", 2L))
                 .isInstanceOf(InviteCodeNotFoundException.class);
         verifyNoInteractions(roomAccessGrantService);
+        verifyNoInteractions(participantRegistryService);
     }
 
     /**
@@ -255,6 +291,7 @@ class PokerRoomServiceTest {
         assertThatThrownBy(() -> service.join("ABC234", 3L))
                 .isInstanceOf(InviteCodeNotFoundException.class);
         verifyNoInteractions(roomAccessGrantService);
+        verifyNoInteractions(participantRegistryService);
     }
 
     /**
@@ -270,6 +307,7 @@ class PokerRoomServiceTest {
         assertThatThrownBy(() -> service.join("ABC234", 3L))
                 .isInstanceOf(InviteCodeNotFoundException.class);
         verifyNoInteractions(roomAccessGrantService);
+        verifyNoInteractions(participantRegistryService);
     }
 
     /**
@@ -286,6 +324,7 @@ class PokerRoomServiceTest {
         assertThatThrownBy(() -> service.join("ABC234", 3L))
                 .isInstanceOf(InviteCodeNotFoundException.class);
         verifyNoInteractions(roomAccessGrantService);
+        verifyNoInteractions(participantRegistryService);
     }
 
     // -------------------------------------------------------------------------
