@@ -120,6 +120,38 @@ CREATE TABLE IF NOT EXISTS agilite.retro_votes (
 CREATE INDEX IF NOT EXISTS idx_retro_votes_card_id ON agilite.retro_votes(card_id);
 CREATE INDEX IF NOT EXISTS idx_retro_votes_session_voter ON agilite.retro_votes(session_id, voter_token);
 
+-- US20.3.1: actions created by any team member (not just the facilitator) during a session's
+-- ACTION phase. team_id AND tenant_id are both denormalized from the owning session at creation
+-- time (never re-derived via a join) rather than merely inferred through session_id:
+--   - GET /retro/teams/{teamId}/actions lists every action for a team across every session (past
+--     and present, including CLOSED ones per US20.3.1's AC) directly off team_id, with no join
+--     back through agilite.retro_sessions.
+--   - PATCH /retro/actions/{actionId} has neither sessionId nor teamId in its path — tenant_id
+--     lets RetroActionService enforce tenant isolation directly, and team_id lets it check
+--     team-membership, without an extra join back through public.teams for every request.
+-- source_card_id is nullable (an action need not originate from a specific card) and ON DELETE
+-- SET NULL rather than CASCADE: retro_cards has no delete endpoint today, but a future one must
+-- never silently destroy an action that was already created from a card.
+CREATE TABLE IF NOT EXISTS agilite.retro_actions (
+    id                  UUID         NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
+    tenant_id           BIGINT       NOT NULL REFERENCES public.tenants(id),
+    team_id             BIGINT       NOT NULL REFERENCES public.teams(id),
+    session_id          UUID         NOT NULL REFERENCES agilite.retro_sessions(id) ON DELETE CASCADE,
+    source_card_id      UUID         REFERENCES agilite.retro_cards(id) ON DELETE SET NULL,
+    title               VARCHAR(200) NOT NULL,
+    owner_user_id       BIGINT       REFERENCES public.users(id),
+    due_date            DATE,
+    -- Free transitions between all 4 statuses (no strict state machine) — an ABANDONNEE action
+    -- may be reopened, matching this US's AC exactly.
+    status              VARCHAR(20)  NOT NULL DEFAULT 'A_FAIRE'
+                             CHECK (status IN ('A_FAIRE', 'EN_COURS', 'TERMINEE', 'ABANDONNEE')),
+    created_by_user_id  BIGINT       NOT NULL REFERENCES public.users(id),
+    created_at          TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    updated_at          TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_retro_actions_team_id    ON agilite.retro_actions(team_id);
+CREATE INDEX IF NOT EXISTS idx_retro_actions_session_id ON agilite.retro_actions(session_id);
+
 -- US09.1.1 — planning poker rooms. FK to public.tenants(id)/public.users(id) only — the sole
 -- cross-schema references this repo's CLAUDE.md allows (never another module schema). UUID
 -- primary key (not BIGSERIAL) to match agilite.retro_sessions and interop with EN09.1's
