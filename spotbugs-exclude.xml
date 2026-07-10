@@ -39,6 +39,14 @@
                  TeamMemberRepository, JoinCodeGenerator). -->
             <Package name="fr.pivot.agilite.retro.session"/>
             <Package name="fr.pivot.agilite.retro.session.dto"/>
+            <!-- US20.2.1 — RetroCustomFormat/RetroFormatColumn are JPA entity/embeddable
+                 (mutable getters/setters required by Hibernate, including the
+                 List<RetroFormatColumn> columns getter); RetroFormatService/RetroFormatController
+                 store a constructor-injected singleton bean (RetroCustomFormatRepository); DTO
+                 records exposing List<RetroFormatColumnResponse> accessors trigger the same
+                 pattern as fr.pivot.agilite.retro.session.dto above. -->
+            <Package name="fr.pivot.agilite.retro.format"/>
+            <Package name="fr.pivot.agilite.retro.format.dto"/>
             <!-- US09.1.1 — Planning poker rooms: PokerRoom is a JPA entity (mutable
                  getters/setters required by Hibernate); PokerRoomService/PokerRoomController
                  store constructor-injected singleton beans (repository, Clock). RoomResponse's
