@@ -139,6 +139,39 @@ CREATE TABLE IF NOT EXISTS agilite.poker_rooms (
 );
 CREATE INDEX IF NOT EXISTS idx_poker_rooms_tenant_id ON agilite.poker_rooms (tenant_id);
 
+-- US09.2.1 — planning poker tickets. A room has at most one ticket VOTING at a time: enforced
+-- both by PokerTicketService (application guard, ActiveTicketExistsException/409) and by the
+-- partial unique index below (structural guarantee, same precedent as agilite.wheel_entry's
+-- partial unique indexes, US14.1.1). revealed_at is written exclusively by US09.2.2, never by
+-- this migration's owning US.
+CREATE TABLE IF NOT EXISTS agilite.poker_tickets (
+    id          UUID NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
+    room_id     UUID NOT NULL REFERENCES agilite.poker_rooms(id) ON DELETE CASCADE,
+    title       VARCHAR(200) NOT NULL,
+    status      VARCHAR(20) NOT NULL DEFAULT 'VOTING' CHECK (status IN ('VOTING', 'REVEALED')),
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    revealed_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_poker_tickets_room_id ON agilite.poker_tickets(room_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_poker_tickets_room_voting
+    ON agilite.poker_tickets(room_id) WHERE status = 'VOTING';
+
+-- US09.2.1 — votes, one row per (ticket, participant). participant_key is a SHA-256 hex digest
+-- of the room access-token grant (EN09.1) — never the raw token itself: PokerVoteService hashes
+-- it before persisting, so a leak of this table alone never hands out a still-usable token
+-- (defense in depth, votes outlive the token's own Redis TTL). Upsertable (change of vote before
+-- reveal), enforced by the unique constraint below.
+CREATE TABLE IF NOT EXISTS agilite.poker_votes (
+    id               UUID NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
+    ticket_id        UUID NOT NULL REFERENCES agilite.poker_tickets(id) ON DELETE CASCADE,
+    participant_key  CHAR(64) NOT NULL,
+    value            VARCHAR(10) NOT NULL,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT uq_poker_votes_ticket_participant UNIQUE (ticket_id, participant_key)
+);
+CREATE INDEX IF NOT EXISTS idx_poker_votes_ticket_id ON agilite.poker_votes(ticket_id);
+
 -- US14.1.1: wheel + wheel_entry (module La Roue)
 -- FK vers public.tenants/public.users : pas de ON DELETE CASCADE (jamais supprimes en dur,
 -- modele soft-delete/desactivation — meme convention que collaboratif.board).

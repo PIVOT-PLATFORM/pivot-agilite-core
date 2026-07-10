@@ -88,6 +88,17 @@
             <Package name="fr.pivot.agilite.retro.vote"/>
             <Package name="fr.pivot.agilite.retro.vote.dto"/>
             <Package name="fr.pivot.agilite.retro.vote.ws"/>
+            <!-- US09.2.1 — Planning poker tickets/votes: PokerTicket/PokerVote are JPA entities
+                 (mutable getters/setters required by Hibernate); PokerTicketService/
+                 PokerVoteService/PokerTicketController/PokerVoteWsController store
+                 constructor-injected singleton beans (repositories, SimpMessagingTemplate,
+                 PokerParticipantRegistryService, Clock) — same established pattern as
+                 fr.pivot.agilite.retro.card/fr.pivot.agilite.retro.card.ws above. -->
+            <Package name="fr.pivot.agilite.poker.ticket"/>
+            <Package name="fr.pivot.agilite.poker.ticket.dto"/>
+            <Package name="fr.pivot.agilite.poker.vote"/>
+            <Package name="fr.pivot.agilite.poker.vote.dto"/>
+            <Package name="fr.pivot.agilite.poker.vote.ws"/>
         </Or>
     </Match>
 

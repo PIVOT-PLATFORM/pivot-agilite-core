@@ -150,6 +150,51 @@ class PokerRoomControllerIT {
     }
 
     /**
+     * US09.2.1: given a room is created, when the response is built, then the facilitator
+     * receives their own non-blank {@code accessToken}, and it is immediately usable — {@code
+     * RoomAccessGrantService#hasAccess} is true for this exact (roomId, accessToken) pair right
+     * after the call, proving a real grant was issued (not just echoed), exactly mirroring what
+     * US09.1.2's join flow already does for a joining participant.
+     */
+    @Test
+    void createRoom_mintsFacilitatorAccessTokenThatIsImmediatelyUsable() throws Exception {
+        MvcResult result = mockMvc.perform(post(BASE_PATH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header("Authorization", "Bearer " + tokenA)
+                        .content("{\"name\": \"Sprint 8 estimation\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.accessToken").isNotEmpty())
+                .andReturn();
+
+        JsonNode body = objectMapper.readTree(result.getResponse().getContentAsString());
+        String roomId = body.get("id").asText();
+        String accessToken = body.get("accessToken").asText();
+
+        assertThat(roomAccessGrantService.hasAccess(java.util.UUID.fromString(roomId), accessToken)).isTrue();
+    }
+
+    /**
+     * US09.2.1: given a room created by the caller, when it is later fetched via {@code GET
+     * /poker/rooms/{roomId}}, then {@code accessToken} is absent/null — a plain read must never
+     * re-mint a fresh facilitator grant (see {@code RoomResponse}'s Javadoc).
+     */
+    @Test
+    void findById_neverReMintsAccessToken() throws Exception {
+        String roomId = createRoomFor(tokenA, "Room");
+
+        MvcResult result = mockMvc.perform(get(BASE_PATH + "/" + roomId)
+                        .header("Authorization", "Bearer " + tokenA))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        JsonNode body = objectMapper.readTree(result.getResponse().getContentAsString());
+        JsonNode accessToken = body.get("accessToken");
+        assertThat(accessToken == null || accessToken.isNull())
+                .as("GET must never re-mint a facilitator grant")
+                .isTrue();
+    }
+
+    /**
      * Given a created room, then its inviteCode is exactly 6 characters from the reduced
      * alphabet (no ambiguous 0/1/I/O).
      */
