@@ -9,6 +9,7 @@ import fr.pivot.agilite.retro.card.dto.RevealedCard;
 import fr.pivot.agilite.retro.phase.dto.CardsRevealedEvent;
 import fr.pivot.agilite.retro.phase.dto.PhaseChangedEvent;
 import fr.pivot.agilite.retro.phase.dto.RevealResponse;
+import fr.pivot.agilite.retro.phase.dto.SessionClosedEvent;
 import fr.pivot.agilite.retro.session.RetroPhase;
 import fr.pivot.agilite.retro.session.RetroSession;
 import fr.pivot.agilite.retro.session.RetroSessionRepository;
@@ -22,6 +23,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -48,6 +50,9 @@ import java.util.UUID;
  *   <li>{@link #closeVote} / {@link #autoTransitionToAction} — facilitator-triggered / timer-
  *       triggered {@code VOTE} → {@code ACTION} transition, broadcasting the vote-count ranking
  *       alongside {@code PHASE_CHANGED} (US20.1.2b).</li>
+ *   <li>{@link #closeSession} / {@link #autoTransitionToClose} — facilitator-triggered / timer-
+ *       triggered {@code ACTION} → {@code CLOSED} transition, broadcasting {@code SESSION_CLOSED}
+ *       — the session's terminal, read-only state (US20.1.2c).</li>
  * </ul>
  */
 @Service
@@ -215,6 +220,45 @@ public class RetroPhaseService {
     }
 
     /**
+     * Manually closes the session, immediately transitioning to the terminal {@link
+     * RetroPhase#CLOSED} phase and broadcasting {@code SESSION_CLOSED} (US20.1.2c) — from then
+     * on the session is read-only: every further write attempt (card, vote) is rejected by its
+     * own service, which already only ever accepts its single required phase.
+     *
+     * @param sessionId the session to close
+     * @param callerId  the authenticated caller's user id
+     * @param tenantId  the authenticated caller's tenant id
+     * @return the session's new phase ({@link RetroPhase#CLOSED})
+     * @throws RetroSessionNotFoundException        if the session does not exist, or belongs to
+     *                                               a different tenant
+     * @throws RetroFacilitatorOnlyException        if the caller is not the facilitator
+     * @throws RetroInvalidPhaseTransitionException if the session is not currently in {@link
+     *                                               RetroPhase#ACTION}
+     */
+    @Transactional
+    public RetroPhase closeSession(final UUID sessionId, final Long callerId, final Long tenantId) {
+        RetroSession session = loadForTenant(sessionId, tenantId);
+        requireFacilitator(session, callerId);
+        requirePhase(session, RetroPhase.ACTION);
+        transitionToClosed(session);
+        return RetroPhase.CLOSED;
+    }
+
+    /**
+     * System-triggered (timer-based) transition to the terminal {@link RetroPhase#CLOSED} phase
+     * — a no-op if the session is no longer in {@link RetroPhase#ACTION} (e.g. already manually
+     * closed).
+     *
+     * @param sessionId the session to transition
+     */
+    @Transactional
+    public void autoTransitionToClose(final UUID sessionId) {
+        sessionRepository.findById(sessionId)
+                .filter(session -> session.getCurrentPhase() == RetroPhase.ACTION)
+                .ifPresent(this::transitionToClosed);
+    }
+
+    /**
      * Loads a session, scoped to the caller's tenant.
      *
      * @param sessionId the session id
@@ -292,6 +336,24 @@ public class RetroPhaseService {
                 RetroSessionDestinations.roomTopic(session.getId()),
                 (Object) PhaseChangedEvent.ofWithRanking(
                         session.getId(), previous, RetroPhase.ACTION, clock.instant(), ranking));
+    }
+
+    /**
+     * Persists the {@code ACTION} → {@code CLOSED} transition and broadcasts {@code
+     * SESSION_CLOSED} (US20.1.2c) — a dedicated event rather than {@code PHASE_CHANGED}, see
+     * {@link SessionClosedEvent}'s JavaDoc for why.
+     *
+     * @param session the session to transition, currently in {@link RetroPhase#ACTION}
+     */
+    private void transitionToClosed(final RetroSession session) {
+        RetroPhase previous = session.getCurrentPhase();
+        session.setCurrentPhase(RetroPhase.CLOSED);
+        sessionRepository.save(session);
+        Instant closedAt = clock.instant();
+        LOG.info("Retro session closed: session={} {} -> {}", session.getId(), previous, RetroPhase.CLOSED);
+        messagingTemplate.convertAndSend(
+                RetroSessionDestinations.roomTopic(session.getId()),
+                (Object) SessionClosedEvent.of(session.getId(), previous, closedAt));
     }
 
     /**

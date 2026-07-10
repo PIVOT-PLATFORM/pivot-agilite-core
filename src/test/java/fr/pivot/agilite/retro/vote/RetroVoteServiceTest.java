@@ -179,6 +179,26 @@ class RetroVoteServiceTest {
     }
 
     /**
+     * Given a closed session (US20.1.2c), when a vote is attempted, then it is rejected with an
+     * unambiguous "closed" message — a distinct branch from the generic phase-mismatch rejection
+     * above, so clients get a stable reason to drive their read-only lockdown UI.
+     */
+    @Test
+    void castVote_sessionClosed_rejectsWithClosedMessage() {
+        RetroSession session = voteSession();
+        session.setCurrentPhase(RetroPhase.CLOSED);
+        when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(session));
+
+        service.castVote(SESSION_ID, CARD_ID, ACCESS_TOKEN, principal);
+
+        verify(voteRepository, never()).save(any());
+        verify(messagingTemplate, never()).convertAndSend(anyString(), any(Object.class));
+        ArgumentCaptor<WsErrorPayload> captor = ArgumentCaptor.forClass(WsErrorPayload.class);
+        verify(messagingTemplate).convertAndSendToUser(eq("connection-1"), eq("/queue/errors"), captor.capture());
+        assertThat(captor.getValue().error()).isEqualTo("Retro session is closed");
+    }
+
+    /**
      * Given an unknown session, when a vote is attempted, then it is rejected.
      */
     @Test

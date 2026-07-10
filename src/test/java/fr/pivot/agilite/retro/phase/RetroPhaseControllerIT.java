@@ -293,6 +293,80 @@ class RetroPhaseControllerIT {
     }
 
     // -------------------------------------------------------------------------
+    // POST /retro/sessions/{id}/close
+    // -------------------------------------------------------------------------
+
+    @Test
+    void closeSession_asFacilitatorInActionPhase_transitionsToClosed() throws Exception {
+        String sessionId = createSession();
+        advancePhase(sessionId, RetroPhase.ACTION);
+
+        mockMvc.perform(
+                        post("/retro/sessions/" + sessionId + "/close")
+                                .header("Authorization", "Bearer " + facilitatorToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.currentPhase").value("CLOSED"));
+    }
+
+    @Test
+    void closeSession_asNonFacilitatorMember_returns403() throws Exception {
+        String sessionId = createSession();
+        advancePhase(sessionId, RetroPhase.ACTION);
+        long memberId = PlatformAuthTestSupport.seedUser(
+                postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword(), tenantId, true);
+        String memberToken = PlatformAuthTestSupport.issueToken(
+                postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword(),
+                memberId, "active", Instant.now().plusSeconds(3600));
+
+        mockMvc.perform(
+                        post("/retro/sessions/" + sessionId + "/close")
+                                .header("Authorization", "Bearer " + memberToken))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void closeSession_crossTenant_returns404() throws Exception {
+        String sessionId = createSession();
+        advancePhase(sessionId, RetroPhase.ACTION);
+
+        mockMvc.perform(
+                        post("/retro/sessions/" + sessionId + "/close")
+                                .header("Authorization", "Bearer " + otherTenantToken))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void closeSession_stillInVote_returns409() throws Exception {
+        String sessionId = createSession();
+        advancePhase(sessionId, RetroPhase.VOTE);
+
+        mockMvc.perform(
+                        post("/retro/sessions/" + sessionId + "/close")
+                                .header("Authorization", "Bearer " + facilitatorToken))
+                .andExpect(status().isConflict());
+    }
+
+    @Test
+    void closeSession_alreadyClosed_returns409() throws Exception {
+        String sessionId = createSession();
+        advancePhase(sessionId, RetroPhase.CLOSED);
+
+        mockMvc.perform(
+                        post("/retro/sessions/" + sessionId + "/close")
+                                .header("Authorization", "Bearer " + facilitatorToken))
+                .andExpect(status().isConflict());
+    }
+
+    @Test
+    void closeSession_noAuthHeader_returns401() throws Exception {
+        String sessionId = createSession();
+        advancePhase(sessionId, RetroPhase.ACTION);
+
+        mockMvc.perform(post("/retro/sessions/" + sessionId + "/close"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
 

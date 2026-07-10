@@ -13,7 +13,7 @@ import java.util.UUID;
 
 /**
  * REST controller exposing facilitator-triggered retro session phase actions under
- * {@code /retro/sessions/{id}} (US20.1.2a).
+ * {@code /retro/sessions/{id}} (US20.1.2a/b/c).
  *
  * <p>Full path (including the application context) is {@code /api/agilite/retro/sessions/{id}}.
  * Both endpoints require a valid {@code Authorization: Bearer <token>} header, resolved into a
@@ -91,6 +91,22 @@ public class RetroPhaseController {
     public Map<String, RetroPhase> closeVote(
             @PathVariable final UUID id, final RequestPrincipal principal) {
         RetroPhase newPhase = phaseService.closeVote(id, principal.userId(), principal.tenantId());
+        return Map.of("currentPhase", newPhase);
+    }
+
+    /**
+     * Manually closes the session, immediately transitioning to the terminal {@link
+     * RetroPhase#CLOSED} phase — the broadcast {@code SESSION_CLOSED} event signals every
+     * participant that the session is now read-only (US20.1.2c).
+     *
+     * @param id        the session UUID from the path
+     * @param principal the resolved caller identity (must be the session's facilitator)
+     * @return the session's new phase ({@link RetroPhase#CLOSED})
+     */
+    @PostMapping("/close")
+    public Map<String, RetroPhase> closeSession(
+            @PathVariable final UUID id, final RequestPrincipal principal) {
+        RetroPhase newPhase = phaseService.closeSession(id, principal.userId(), principal.tenantId());
         return Map.of("currentPhase", newPhase);
     }
 }
