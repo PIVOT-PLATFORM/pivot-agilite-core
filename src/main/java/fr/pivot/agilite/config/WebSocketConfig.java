@@ -1,6 +1,7 @@
 package fr.pivot.agilite.config;
 
 import fr.pivot.agilite.poker.ws.PokerChannelInterceptor;
+import fr.pivot.agilite.retro.ws.RetroChannelInterceptor;
 import fr.pivot.agilite.ws.WsConnectionHandshakeHandler;
 import fr.pivot.agilite.ws.WsSessionTrackingHandlerDecoratorFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -82,6 +83,15 @@ import org.springframework.web.socket.config.annotation.WebSocketTransportRegist
  * {@link PokerChannelInterceptor}). {@link PokerChannelInterceptor} enforces room-scoped
  * authorization and rate limiting on this traffic; {@link WsSessionTrackingHandlerDecoratorFactory}
  * lets it force-close a session after repeated violations.
+ *
+ * <p><strong>US20.1.2a — retro session broker (same in-process {@code SimpleBroker}, additional
+ * disjoint prefix):</strong> {@code /topic/agilite/retro/{sessionId}} (see {@code
+ * fr.pivot.agilite.retro.ws.RetroSessionDestinations}) is registered on the exact same {@code
+ * SimpleBroker} instance as planning-poker rooms, not a separate one — both are ephemeral,
+ * single-instance, low-latency pub/sub with no need for the durable cross-domain bus, and {@code
+ * enableSimpleBroker} accepts any number of disjoint prefixes in one registration. {@link
+ * RetroChannelInterceptor} enforces the same session-scoped authorization/rate-limiting pattern
+ * as {@link PokerChannelInterceptor}, registered alongside it on the same inbound channel.
  */
 @Configuration
 @EnableWebSocketMessageBroker
@@ -100,18 +110,19 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
      * registration from {@link #DOMAIN_TOPIC_PREFIX}. Package-private for direct assertion from
      * tests.
      */
-    static final String[] ROOM_BROKER_PREFIXES = {"/topic/agilite/poker", "/queue"};
+    static final String[] ROOM_BROKER_PREFIXES = {"/topic/agilite/poker", "/topic/agilite/retro", "/queue"};
 
     private final String relayHost;
     private final int relayPort;
     private final boolean relayEnabled;
     private final String allowedOrigins;
     private final PokerChannelInterceptor pokerChannelInterceptor;
+    private final RetroChannelInterceptor retroChannelInterceptor;
     private final WsSessionTrackingHandlerDecoratorFactory sessionTrackingHandlerDecoratorFactory;
 
     /**
-     * Creates the configuration with the shared broker's connection coordinates and the EN09.1
-     * room-isolation collaborators.
+     * Creates the configuration with the shared broker's connection coordinates and the EN09.1/
+     * US20.1.2a room-isolation collaborators.
      *
      * @param relayHost                              hostname of the shared ActiveMQ broker
      *                                                (STOMP transport)
@@ -124,11 +135,14 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
      *                                                handshake
      * @param pokerChannelInterceptor                STOMP frame interceptor enforcing planning-
      *                                                poker room access grants and rate limits
+     * @param retroChannelInterceptor                STOMP frame interceptor enforcing retro
+     *                                                session access grants and rate limits
+     *                                                (US20.1.2a)
      * @param sessionTrackingHandlerDecoratorFactory  decorator factory that feeds
      *                                                {@code WsSessionRegistry}, used by
-     *                                                {@code pokerChannelInterceptor} to
-     *                                                force-close a session after repeated
-     *                                                rate-limit violations
+     *                                                {@code pokerChannelInterceptor}/{@code
+     *                                                retroChannelInterceptor} to force-close a
+     *                                                session after repeated rate-limit violations
      */
     public WebSocketConfig(
             @Value("${pivot.activemq.relay-host}") final String relayHost,
@@ -136,12 +150,14 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
             @Value("${pivot.activemq.relay-enabled:true}") final boolean relayEnabled,
             @Value("${pivot.cors.allowed-origins}") final String allowedOrigins,
             final PokerChannelInterceptor pokerChannelInterceptor,
+            final RetroChannelInterceptor retroChannelInterceptor,
             final WsSessionTrackingHandlerDecoratorFactory sessionTrackingHandlerDecoratorFactory) {
         this.relayHost = relayHost;
         this.relayPort = relayPort;
         this.relayEnabled = relayEnabled;
         this.allowedOrigins = allowedOrigins;
         this.pokerChannelInterceptor = pokerChannelInterceptor;
+        this.retroChannelInterceptor = retroChannelInterceptor;
         this.sessionTrackingHandlerDecoratorFactory = sessionTrackingHandlerDecoratorFactory;
     }
 
@@ -215,13 +231,15 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     }
 
     /**
-     * Registers {@link PokerChannelInterceptor} on the client inbound channel, enforcing EN09.1
-     * room isolation on every SUBSCRIBE/SEND frame.
+     * Registers {@link PokerChannelInterceptor} and {@link RetroChannelInterceptor} on the client
+     * inbound channel, enforcing EN09.1/US20.1.2a room isolation on every SUBSCRIBE/SEND frame.
+     * Each interceptor only ever acts on its own domain's destination prefixes (see their
+     * respective JavaDoc) — registering both has no effect on the other's traffic.
      *
      * @param registration the inbound channel registration
      */
     @Override
     public void configureClientInboundChannel(final ChannelRegistration registration) {
-        registration.interceptors(pokerChannelInterceptor);
+        registration.interceptors(pokerChannelInterceptor, retroChannelInterceptor);
     }
 }

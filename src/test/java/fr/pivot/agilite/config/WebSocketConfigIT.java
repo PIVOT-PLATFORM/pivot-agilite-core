@@ -1,6 +1,7 @@
 package fr.pivot.agilite.config;
 
 import fr.pivot.agilite.poker.ws.PokerChannelInterceptor;
+import fr.pivot.agilite.retro.ws.RetroChannelInterceptor;
 import fr.pivot.agilite.ws.WsSessionRegistry;
 import fr.pivot.agilite.ws.WsSessionTrackingHandlerDecoratorFactory;
 import org.junit.jupiter.api.Test;
@@ -110,6 +111,18 @@ class WebSocketConfigIT {
         @Bean
         PokerChannelInterceptor pokerChannelInterceptor() {
             return mock(PokerChannelInterceptor.class);
+        }
+
+        /**
+         * Mocked US20.1.2a retro session isolation interceptor — unused by this relay-
+         * connectivity test, but required to satisfy {@link WebSocketConfig}'s constructor
+         * since this slice loads only {@link WebSocketConfig}, not the full application context.
+         *
+         * @return a Mockito mock
+         */
+        @Bean
+        RetroChannelInterceptor retroChannelInterceptor() {
+            return mock(RetroChannelInterceptor.class);
         }
 
         /**

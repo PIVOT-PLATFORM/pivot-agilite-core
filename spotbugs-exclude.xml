@@ -58,6 +58,21 @@
                  constructor-injected singleton beans (repositories). -->
             <Package name="fr.pivot.agilite.team"/>
             <Package name="fr.pivot.agilite.team.dto"/>
+            <!-- US20.1.2a — retro card/phase/WS-isolation business logic: services and the
+                 channel interceptor store constructor-injected singleton beans (repositories,
+                 SimpMessagingTemplate, StringRedisTemplate, MeterRegistry, WsSessionRegistry,
+                 AuthenticatedPrincipalResolver, Clock); RetroCard is a JPA entity (mutable
+                 getters/setters required by Hibernate). -->
+            <Package name="fr.pivot.agilite.retro.card"/>
+            <Package name="fr.pivot.agilite.retro.card.ws"/>
+            <Package name="fr.pivot.agilite.retro.phase"/>
+            <Package name="fr.pivot.agilite.retro.ws"/>
+            <!-- US20.1.2a — CardsRevealedEvent/RevealResponse's `columns` is always defensively
+                 copied into an unmodifiable map/lists by their compact canonical constructor
+                 (RevealedColumns.immutableCopy) before being stored — mirrors this same filter's
+                 existing RoomResponse.cardValues rationale above: SpotBugs cannot prove
+                 immutability statically from the Map<String, List<...>> field type alone. -->
+            <Package name="fr.pivot.agilite.retro.phase.dto"/>
         </Or>
     </Match>
 

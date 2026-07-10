@@ -50,3 +50,9 @@ pivot:
     # provide no real ActiveMQ broker. WebSocketConfigIT (EN07.3, real ActiveMQ Testcontainer)
     # overrides this back to true via @DynamicPropertySource.
     relay-enabled: false
+  agilite:
+    retro:
+      phase-scheduler:
+        # US20.1.2a — much shorter than the production default (2000ms) so
+        # RetroPhaseSchedulerIT's timer-expiry assertions do not need long Awaitility waits.
+        fixed-delay-ms: 200
