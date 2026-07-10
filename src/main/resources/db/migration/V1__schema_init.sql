@@ -85,6 +85,41 @@ CREATE TABLE IF NOT EXISTS agilite.retro_cards (
 );
 CREATE INDEX IF NOT EXISTS idx_retro_cards_session_id ON agilite.retro_cards(session_id);
 
+-- US20.1.2b: per-(session, participant) dot-vote balance. voter_token is the opaque
+-- access-token string minted by RetroSessionAccessService.join() (RetroChannelInterceptor's
+-- ACCESS_TOKEN_HEADER) — reused as-is as the vote-balance identity key, exactly like the
+-- existing rate-limit Redis keys, so it works uniformly for authenticated and anonymous
+-- participants alike. votes_used is only ever mutated via the guarded atomic UPDATEs in
+-- RetroVoteBalanceRepository (incrementIfAvailable/decrementIfPositive) — the CHECK constraint
+-- below is the DB-level backstop proving it can never go negative or exceed votes_allowed, not
+-- merely an app-level promise.
+CREATE TABLE IF NOT EXISTS agilite.retro_vote_balances (
+    id             UUID        NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
+    session_id     UUID        NOT NULL REFERENCES agilite.retro_sessions(id) ON DELETE CASCADE,
+    voter_token    VARCHAR(64) NOT NULL,
+    votes_used     INTEGER     NOT NULL DEFAULT 0,
+    votes_allowed  INTEGER     NOT NULL,
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT uq_retro_vote_balances_session_voter UNIQUE (session_id, voter_token),
+    CONSTRAINT chk_retro_vote_balances_used_bounds CHECK (votes_used >= 0 AND votes_used <= votes_allowed)
+);
+CREATE INDEX IF NOT EXISTS idx_retro_vote_balances_session_id ON agilite.retro_vote_balances(session_id);
+
+-- US20.1.2b: individual dot-votes — one row per vote (a participant may cast several votes on
+-- the same card, so (session_id, card_id, voter_token) is deliberately not unique). Never carries
+-- voter identity outside this table: VOTE_CAST/VOTE_UNCAST broadcasts only ever expose the
+-- per-card aggregate count (see RetroVoteService), never voter_token.
+CREATE TABLE IF NOT EXISTS agilite.retro_votes (
+    id           UUID        NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
+    session_id   UUID        NOT NULL REFERENCES agilite.retro_sessions(id) ON DELETE CASCADE,
+    card_id      UUID        NOT NULL REFERENCES agilite.retro_cards(id) ON DELETE CASCADE,
+    voter_token  VARCHAR(64) NOT NULL,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_retro_votes_card_id ON agilite.retro_votes(card_id);
+CREATE INDEX IF NOT EXISTS idx_retro_votes_session_voter ON agilite.retro_votes(session_id, voter_token);
+
 -- US09.1.1 — planning poker rooms. FK to public.tenants(id)/public.users(id) only — the sole
 -- cross-schema references this repo's CLAUDE.md allows (never another module schema). UUID
 -- primary key (not BIGSERIAL) to match agilite.retro_sessions and interop with EN09.1's
