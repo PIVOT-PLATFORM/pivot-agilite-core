@@ -1,5 +1,6 @@
 package fr.pivot.agilite.exception;
 
+import fr.pivot.agilite.poker.exception.InviteCodeNotFoundException;
 import fr.pivot.agilite.poker.exception.RoomNotFoundException;
 import jakarta.validation.ConstraintViolationException;
 import org.springframework.http.HttpStatus;
@@ -17,7 +18,8 @@ import java.util.Map;
  * RetroTeamAccessDeniedException}, {@link RetroSessionNotFoundException}, {@link
  * RetroJoinCodeNotFoundException}, {@link RetroSessionExpiredException}, {@link
  * InvalidRetroFormatException}), planning poker room lookup failures (US09.1.1, {@link
- * RoomNotFoundException}), as well as Spring MVC/Bean Validation failures ({@link
+ * RoomNotFoundException}) and join-by-code failures (US09.1.2, {@link
+ * InviteCodeNotFoundException}), as well as Spring MVC/Bean Validation failures ({@link
  * MethodArgumentNotValidException}, {@link ConstraintViolationException}).
  */
 @RestControllerAdvice
@@ -35,6 +37,24 @@ public class GlobalExceptionHandler {
     public ProblemDetail handleRoomNotFound(final RoomNotFoundException ex) {
         ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.NOT_FOUND);
         problem.setTitle("Room not found");
+        problem.setDetail(ex.getMessage());
+        return problem;
+    }
+
+    /**
+     * Returns HTTP 404 when a planning poker invite code does not resolve to a room currently
+     * joinable by the caller's tenant (US09.1.2) — collapsing an unknown code, a code belonging
+     * to another tenant, a code for a deactivated room, and a code for an expired room into the
+     * exact same response (ADR-026 §2), unlike {@link RetroSessionExpiredException}'s separate
+     * 410 for the retro-session join flow.
+     *
+     * @param ex the thrown exception
+     * @return a 404 problem detail
+     */
+    @ExceptionHandler(InviteCodeNotFoundException.class)
+    public ProblemDetail handleInviteCodeNotFound(final InviteCodeNotFoundException ex) {
+        ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.NOT_FOUND);
+        problem.setTitle("Invite code not found");
         problem.setDetail(ex.getMessage());
         return problem;
     }

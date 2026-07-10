@@ -29,4 +29,16 @@ public interface PokerRoomRepository extends JpaRepository<PokerRoom, UUID> {
      * @return {@code true} if a room already uses this invite code
      */
     boolean existsByInviteCode(String inviteCode);
+
+    /**
+     * Finds a room by its invite code, globally — not scoped to any tenant. Invite codes are
+     * unique platform-wide by construction ({@link InviteCodeGenerator}, enforced at creation
+     * time by the retry loop above and the {@code unique} DB constraint), so there is exactly one
+     * candidate room to resolve before {@link PokerRoomService#join} performs its own tenant/
+     * active/expiry checks.
+     *
+     * @param inviteCode the invite code to resolve
+     * @return the matching room, or empty if no room currently uses this invite code
+     */
+    Optional<PokerRoom> findByInviteCode(String inviteCode);
 }

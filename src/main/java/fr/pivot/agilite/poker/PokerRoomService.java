@@ -1,19 +1,23 @@
 package fr.pivot.agilite.poker;
 
+import fr.pivot.agilite.poker.dto.JoinRoomResponse;
 import fr.pivot.agilite.poker.dto.RoomResponse;
+import fr.pivot.agilite.poker.exception.InviteCodeNotFoundException;
 import fr.pivot.agilite.poker.exception.RoomNotFoundException;
 import fr.pivot.agilite.poker.ws.PokerRoomDestinations;
+import fr.pivot.agilite.poker.ws.RoomAccessGrantService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.UUID;
 
 /**
- * Business logic for planning poker room creation and lookup (US09.1.1).
+ * Business logic for planning poker room creation, lookup, and join-by-code (US09.1.1, US09.1.2).
  */
 @Service
 public class PokerRoomService {
@@ -27,6 +31,7 @@ public class PokerRoomService {
     private final PokerRoomRepository repository;
     private final Clock clock;
     private final int defaultExpirationHours;
+    private final RoomAccessGrantService roomAccessGrantService;
 
     /**
      * Constructs the service.
@@ -37,14 +42,18 @@ public class PokerRoomService {
      *                               {@code expirationHours} (property {@code
      *                               pivot.agilite.poker.room.default-expiration-hours}, 24 by
      *                               default)
+     * @param roomAccessGrantService issues the room-scoped WebSocket access grant minted on a
+     *                               successful join (US09.1.2)
      */
     public PokerRoomService(
             final PokerRoomRepository repository,
             final Clock clock,
-            @Value("${pivot.agilite.poker.room.default-expiration-hours:24}") final int defaultExpirationHours) {
+            @Value("${pivot.agilite.poker.room.default-expiration-hours:24}") final int defaultExpirationHours,
+            final RoomAccessGrantService roomAccessGrantService) {
         this.repository = repository;
         this.clock = clock;
         this.defaultExpirationHours = defaultExpirationHours;
+        this.roomAccessGrantService = roomAccessGrantService;
     }
 
     /**
@@ -84,6 +93,45 @@ public class PokerRoomService {
         final PokerRoom room = repository.findByIdAndTenantId(roomId, tenantId)
                 .orElseThrow(() -> new RoomNotFoundException(roomId));
         return toResponse(room);
+    }
+
+    /**
+     * Resolves an invite code into a joinable room and mints a WebSocket access grant for the
+     * caller (US09.1.2).
+     *
+     * <p>Security AC (ADR-026 §2): an unknown code, a code belonging to a room in a different
+     * tenant, a code for a deactivated room, and a code for an expired room are all collapsed
+     * into the exact same {@link InviteCodeNotFoundException} — never distinguished — so a
+     * caller can never learn which of the four applies, nor confirm cross-tenant existence.
+     *
+     * @param code     the 6-character invite code (already validated by the controller)
+     * @param tenantId the caller's tenant id, resolved server-side from the bearer token
+     * @return the join response, including a freshly minted {@code accessToken}
+     * @throws InviteCodeNotFoundException if the code does not resolve to a room currently
+     *                                     joinable by this tenant
+     */
+    @Transactional
+    public JoinRoomResponse join(final String code, final Long tenantId) {
+        final Instant now = clock.instant();
+        final PokerRoom room = repository.findByInviteCode(code)
+                .filter(candidate -> candidate.getTenantId().equals(tenantId))
+                .filter(PokerRoom::isActive)
+                .filter(candidate -> candidate.getExpiresAt().isAfter(now))
+                .orElseThrow(InviteCodeNotFoundException::new);
+
+        final String accessToken = UUID.randomUUID().toString();
+        final Duration ttl = Duration.between(now, room.getExpiresAt());
+        roomAccessGrantService.grantAccess(room.getId(), accessToken, ttl);
+
+        return new JoinRoomResponse(
+                room.getId(),
+                room.getName(),
+                room.getSequence(),
+                PokerCardDeck.FIBONACCI_VALUES,
+                room.isActive(),
+                room.getExpiresAt(),
+                PokerRoomDestinations.roomTopic(room.getId()),
+                accessToken);
     }
 
     /**
