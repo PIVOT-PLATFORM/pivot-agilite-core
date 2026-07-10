@@ -1,0 +1,258 @@
+package fr.pivot.agilite.retro.phase;
+
+import fr.pivot.agilite.exception.RetroFacilitatorOnlyException;
+import fr.pivot.agilite.exception.RetroInvalidPhaseTransitionException;
+import fr.pivot.agilite.exception.RetroSessionNotFoundException;
+import fr.pivot.agilite.retro.card.RetroCard;
+import fr.pivot.agilite.retro.card.RetroCardRepository;
+import fr.pivot.agilite.retro.phase.dto.PhaseChangedEvent;
+import fr.pivot.agilite.retro.phase.dto.RevealResponse;
+import fr.pivot.agilite.retro.session.RetroFormat;
+import fr.pivot.agilite.retro.session.RetroPhase;
+import fr.pivot.agilite.retro.session.RetroSession;
+import fr.pivot.agilite.retro.session.RetroSessionRepository;
+import fr.pivot.agilite.retro.ws.RetroSessionDestinations;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.test.util.ReflectionTestUtils;
+
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+/**
+ * Unit tests for {@link RetroPhaseService} (US20.1.2a) — facilitator/tenant/phase gating for
+ * manual contribution close and reveal, plus the reveal grouping-by-column logic.
+ */
+class RetroPhaseServiceTest {
+
+    private static final Long TENANT_ID = 7L;
+    private static final Long FACILITATOR_ID = 99L;
+    private static final Long OTHER_USER_ID = 100L;
+
+    private RetroSessionRepository sessionRepository;
+    private RetroCardRepository cardRepository;
+    private SimpMessagingTemplate messagingTemplate;
+    private RetroPhaseService service;
+
+    @BeforeEach
+    void setUp() {
+        sessionRepository = mock(RetroSessionRepository.class);
+        cardRepository = mock(RetroCardRepository.class);
+        messagingTemplate = mock(SimpMessagingTemplate.class);
+        Clock clock = Clock.fixed(Instant.parse("2026-07-10T12:00:00Z"), ZoneOffset.UTC);
+        service = new RetroPhaseService(sessionRepository, cardRepository, messagingTemplate, clock);
+        when(sessionRepository.save(any(RetroSession.class))).thenAnswer(inv -> inv.getArgument(0));
+    }
+
+    // -------------------------------------------------------------------------
+    // closeContribution
+    // -------------------------------------------------------------------------
+
+    /**
+     * Given the facilitator, when they manually close contribution on a CONTRIBUTION-phase
+     * session, then it transitions to REVUE and PHASE_CHANGED is broadcast.
+     */
+    @Test
+    void closeContribution_asFacilitator_transitionsAndBroadcasts() {
+        RetroSession session = session(RetroPhase.CONTRIBUTION);
+        when(sessionRepository.findById(session.getId())).thenReturn(Optional.of(session));
+
+        RetroPhase result = service.closeContribution(session.getId(), FACILITATOR_ID, TENANT_ID);
+
+        assertThat(result).isEqualTo(RetroPhase.REVUE);
+        assertThat(session.getCurrentPhase()).isEqualTo(RetroPhase.REVUE);
+        ArgumentCaptor<Object> captor = ArgumentCaptor.forClass(Object.class);
+        verify(messagingTemplate).convertAndSend(eq(RetroSessionDestinations.roomTopic(session.getId())), captor.capture());
+        PhaseChangedEvent event = (PhaseChangedEvent) captor.getValue();
+        assertThat(event.previousPhase()).isEqualTo(RetroPhase.CONTRIBUTION);
+        assertThat(event.currentPhase()).isEqualTo(RetroPhase.REVUE);
+    }
+
+    /**
+     * Given a caller who is not the facilitator, when they attempt to close contribution, then
+     * it is rejected and no transition happens.
+     */
+    @Test
+    void closeContribution_notFacilitator_throwsAndDoesNotTransition() {
+        RetroSession session = session(RetroPhase.CONTRIBUTION);
+        when(sessionRepository.findById(session.getId())).thenReturn(Optional.of(session));
+
+        assertThatThrownBy(() -> service.closeContribution(session.getId(), OTHER_USER_ID, TENANT_ID))
+                .isInstanceOf(RetroFacilitatorOnlyException.class);
+        assertThat(session.getCurrentPhase()).isEqualTo(RetroPhase.CONTRIBUTION);
+        verify(messagingTemplate, never()).convertAndSend(anyString(), any(Object.class));
+    }
+
+    /**
+     * Given a session already past CONTRIBUTION, when the facilitator attempts to close it
+     * again, then it is rejected with a conflict.
+     */
+    @Test
+    void closeContribution_alreadyRevue_throwsInvalidTransition() {
+        RetroSession session = session(RetroPhase.REVUE);
+        when(sessionRepository.findById(session.getId())).thenReturn(Optional.of(session));
+
+        assertThatThrownBy(() -> service.closeContribution(session.getId(), FACILITATOR_ID, TENANT_ID))
+                .isInstanceOf(RetroInvalidPhaseTransitionException.class);
+    }
+
+    /**
+     * Given a session belonging to a different tenant, when closing contribution is attempted,
+     * then it is rejected as not-found (never confirming cross-tenant existence).
+     */
+    @Test
+    void closeContribution_crossTenant_throwsNotFound() {
+        RetroSession session = session(RetroPhase.CONTRIBUTION);
+        when(sessionRepository.findById(session.getId())).thenReturn(Optional.of(session));
+
+        assertThatThrownBy(() -> service.closeContribution(session.getId(), FACILITATOR_ID, 999L))
+                .isInstanceOf(RetroSessionNotFoundException.class);
+    }
+
+    /**
+     * Given an unknown session id, when closing contribution is attempted, then it is rejected
+     * as not-found.
+     */
+    @Test
+    void closeContribution_unknownSession_throwsNotFound() {
+        UUID unknown = UUID.randomUUID();
+        when(sessionRepository.findById(unknown)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.closeContribution(unknown, FACILITATOR_ID, TENANT_ID))
+                .isInstanceOf(RetroSessionNotFoundException.class);
+    }
+
+    // -------------------------------------------------------------------------
+    // autoTransitionToRevue
+    // -------------------------------------------------------------------------
+
+    /**
+     * Given a session in CONTRIBUTION, when the scheduler triggers the auto-transition, then it
+     * moves to REVUE and PHASE_CHANGED is broadcast — no caller identity needed.
+     */
+    @Test
+    void autoTransitionToRevue_contributionPhase_transitions() {
+        RetroSession session = session(RetroPhase.CONTRIBUTION);
+        when(sessionRepository.findById(session.getId())).thenReturn(Optional.of(session));
+
+        service.autoTransitionToRevue(session.getId());
+
+        assertThat(session.getCurrentPhase()).isEqualTo(RetroPhase.REVUE);
+        verify(messagingTemplate).convertAndSend(eq(RetroSessionDestinations.roomTopic(session.getId())), any(Object.class));
+    }
+
+    /**
+     * Given a session already advanced past CONTRIBUTION (e.g. manually closed already), when
+     * the scheduler's auto-transition runs, then it is a no-op — no double transition, no
+     * duplicate broadcast.
+     */
+    @Test
+    void autoTransitionToRevue_alreadyPastContribution_isNoOp() {
+        RetroSession session = session(RetroPhase.REVUE);
+        when(sessionRepository.findById(session.getId())).thenReturn(Optional.of(session));
+
+        service.autoTransitionToRevue(session.getId());
+
+        verify(sessionRepository, never()).save(any());
+        verify(messagingTemplate, never()).convertAndSend(anyString(), any(Object.class));
+    }
+
+    // -------------------------------------------------------------------------
+    // reveal
+    // -------------------------------------------------------------------------
+
+    /**
+     * Given a REVUE-phase session with cards in multiple columns, when the facilitator triggers
+     * reveal, then every card is broadcast in clear, grouped by column, and returned identically
+     * in the REST response.
+     */
+    @Test
+    void reveal_asFacilitatorInRevuePhase_broadcastsGroupedByColumn() {
+        RetroSession session = session(RetroPhase.REVUE);
+        UUID card1 = UUID.randomUUID();
+        UUID card2 = UUID.randomUUID();
+        UUID card3 = UUID.randomUUID();
+        when(sessionRepository.findById(session.getId())).thenReturn(Optional.of(session));
+        when(cardRepository.findBySessionIdOrderByCreatedAtAsc(session.getId())).thenReturn(List.of(
+                cardWithId(card1, session.getId(), "went-well", "Good pace", false, FACILITATOR_ID),
+                cardWithId(card2, session.getId(), "to-improve", "Too many meetings", true, null),
+                cardWithId(card3, session.getId(), "went-well", "Great teamwork", false, OTHER_USER_ID)));
+
+        RevealResponse response = service.reveal(session.getId(), FACILITATOR_ID, TENANT_ID);
+
+        assertThat(response.cardCount()).isEqualTo(3);
+        assertThat(response.columns()).containsKeys("went-well", "to-improve");
+        assertThat(response.columns().get("went-well")).hasSize(2);
+        assertThat(response.columns().get("to-improve")).hasSize(1);
+
+        ArgumentCaptor<Object> captor = ArgumentCaptor.forClass(Object.class);
+        verify(messagingTemplate).convertAndSend(eq(RetroSessionDestinations.roomTopic(session.getId())), captor.capture());
+        assertThat(captor.getValue().toString()).contains("Good pace", "Too many meetings", "Great teamwork");
+    }
+
+    /**
+     * Given a session still in CONTRIBUTION (never closed), when reveal is attempted, then it is
+     * rejected with a conflict — reveal requires REVUE to have been reached first.
+     */
+    @Test
+    void reveal_stillInContribution_throwsInvalidTransition() {
+        RetroSession session = session(RetroPhase.CONTRIBUTION);
+        when(sessionRepository.findById(session.getId())).thenReturn(Optional.of(session));
+
+        assertThatThrownBy(() -> service.reveal(session.getId(), FACILITATOR_ID, TENANT_ID))
+                .isInstanceOf(RetroInvalidPhaseTransitionException.class);
+    }
+
+    /**
+     * Given a non-facilitator caller, when reveal is attempted, then it is rejected.
+     */
+    @Test
+    void reveal_notFacilitator_throws() {
+        RetroSession session = session(RetroPhase.REVUE);
+        when(sessionRepository.findById(session.getId())).thenReturn(Optional.of(session));
+
+        assertThatThrownBy(() -> service.reveal(session.getId(), OTHER_USER_ID, TENANT_ID))
+                .isInstanceOf(RetroFacilitatorOnlyException.class);
+    }
+
+    /**
+     * Builds a {@link RetroCard} with its {@code id} force-set via reflection — mirrors {@code
+     * PokerChannelInterceptorTest}'s use of {@link ReflectionTestUtils} for otherwise-inaccessible
+     * fields; {@code id} is normally only ever assigned by JPA on persist.
+     */
+    private static RetroCard cardWithId(
+            final UUID id, final UUID sessionId, final String columnKey,
+            final String content, final boolean anonymous, final Long authorUserId) {
+        RetroCard card = new RetroCard(sessionId, columnKey, content, anonymous, authorUserId, Instant.now());
+        ReflectionTestUtils.setField(card, "id", id);
+        return card;
+    }
+
+    private static RetroSession session(final RetroPhase phase) {
+        RetroSession session = new RetroSession(
+                TENANT_ID, 1L, "Sprint Retro", RetroFormat.START_STOP_CONTINUE, null,
+                FACILITATOR_ID, "ABC123", null, null, null, 3,
+                Instant.parse("2026-07-10T18:00:00Z"), Instant.parse("2026-07-10T10:00:00Z"));
+        session.setCurrentPhase(phase);
+        // id is normally only assigned by JPA on persist; force-set here (mirrors cardWithId
+        // above) so session.getId() is realistic rather than null in assertions/logging.
+        ReflectionTestUtils.setField(session, "id", UUID.randomUUID());
+        return session;
+    }
+}

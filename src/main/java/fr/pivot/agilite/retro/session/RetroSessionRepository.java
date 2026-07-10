@@ -2,6 +2,7 @@ package fr.pivot.agilite.retro.session;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -38,4 +39,14 @@ public interface RetroSessionRepository extends JpaRepository<RetroSession, UUID
      * @return {@code true} if a session already uses this code
      */
     boolean existsByJoinCode(String joinCode);
+
+    /**
+     * Finds every session currently in the given phase — used by {@code RetroPhaseScheduler}
+     * (US20.1.2a) to find {@code CONTRIBUTION}-phase sessions whose configured timer may have
+     * elapsed.
+     *
+     * @param currentPhase the phase to filter on
+     * @return every session currently in that phase
+     */
+    List<RetroSession> findByCurrentPhase(RetroPhase currentPhase);
 }

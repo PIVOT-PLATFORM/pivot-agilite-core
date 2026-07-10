@@ -17,9 +17,10 @@ import java.util.Map;
  * <p>Handles retro-session domain exceptions ({@link RetroTeamNotFoundException}, {@link
  * RetroTeamAccessDeniedException}, {@link RetroSessionNotFoundException}, {@link
  * RetroJoinCodeNotFoundException}, {@link RetroSessionExpiredException}, {@link
- * InvalidRetroFormatException}), planning poker room lookup failures (US09.1.1, {@link
- * RoomNotFoundException}) and join-by-code failures (US09.1.2, {@link
- * InviteCodeNotFoundException}), wheel/team domain exceptions (US14.1.1, {@link
+ * InvalidRetroFormatException}), retro-session phase/facilitator exceptions (US20.1.2a, {@link
+ * RetroFacilitatorOnlyException}, {@link RetroInvalidPhaseTransitionException}), planning poker
+ * room lookup failures (US09.1.1, {@link RoomNotFoundException}) and join-by-code failures
+ * (US09.1.2, {@link InviteCodeNotFoundException}), wheel/team domain exceptions (US14.1.1, {@link
  * WheelNotFoundException}, {@link TeamNotFoundException}, {@link WheelValidationException}), as
  * well as Spring MVC/Bean Validation failures ({@link MethodArgumentNotValidException}, {@link
  * ConstraintViolationException}).
@@ -130,6 +131,36 @@ public class GlobalExceptionHandler {
     public ProblemDetail handleRetroSessionExpired(final RetroSessionExpiredException ex) {
         ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.GONE);
         problem.setTitle("Retro session expired");
+        problem.setDetail(ex.getMessage());
+        return problem;
+    }
+
+    /**
+     * Returns HTTP 403 when an authenticated, same-tenant caller attempts a facilitator-only
+     * retro session action but is not that session's facilitator (US20.1.2a).
+     *
+     * @param ex the thrown exception
+     * @return a 403 problem detail
+     */
+    @ExceptionHandler(RetroFacilitatorOnlyException.class)
+    public ProblemDetail handleRetroFacilitatorOnly(final RetroFacilitatorOnlyException ex) {
+        ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.FORBIDDEN);
+        problem.setTitle("Facilitator only");
+        problem.setDetail(ex.getMessage());
+        return problem;
+    }
+
+    /**
+     * Returns HTTP 409 when a retro session phase-dependent action is attempted while the
+     * session is not in the required phase (US20.1.2a).
+     *
+     * @param ex the thrown exception
+     * @return a 409 problem detail
+     */
+    @ExceptionHandler(RetroInvalidPhaseTransitionException.class)
+    public ProblemDetail handleRetroInvalidPhaseTransition(final RetroInvalidPhaseTransitionException ex) {
+        ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.CONFLICT);
+        problem.setTitle("Invalid phase transition");
         problem.setDetail(ex.getMessage());
         return problem;
     }

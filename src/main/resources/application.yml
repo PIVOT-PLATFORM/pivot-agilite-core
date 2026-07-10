@@ -79,3 +79,8 @@ pivot:
         # US09.1.1 — default room lifetime when the caller omits `expirationHours` in
         # POST /api/agilite/poker/rooms (ADR-026 §2 : "expiration configurable, 24h par défaut").
         default-expiration-hours: ${PIVOT_POKER_ROOM_DEFAULT_EXPIRATION_HOURS:24}
+    retro:
+      phase-scheduler:
+        # US20.1.2a — poll interval for RetroPhaseScheduler's CONTRIBUTION timer-expiry check.
+        # Overridden to a much shorter value in application-test.yml for faster IT feedback.
+        fixed-delay-ms: ${PIVOT_RETRO_PHASE_SCHEDULER_FIXED_DELAY_MS:2000}
