@@ -1,6 +1,7 @@
 package fr.pivot.agilite.retro.phase;
 
 import fr.pivot.agilite.retro.session.RetroPhase;
+import fr.pivot.agilite.retro.session.RetroSession;
 import fr.pivot.agilite.retro.session.RetroSessionRepository;
 import fr.pivot.agilite.testsupport.PlatformAuthTestSupport;
 import fr.pivot.agilite.testsupport.PlatformAuthTestSupport.AuthFixture;
@@ -118,6 +119,61 @@ class RetroPhaseSchedulerIT {
 
         RetroPhase phase = sessionRepository.findById(UUID.fromString(sessionId)).orElseThrow().getCurrentPhase();
         assertThat(phase).isEqualTo(RetroPhase.CONTRIBUTION);
+    }
+
+    /**
+     * Given a session created with a 1-second vote timer and already in the VOTE phase, when
+     * that timer elapses, then the scheduler auto-transitions it to ACTION without any manual
+     * action (US20.1.2b). Entering VOTE via {@code advanceToVote} stamps {@code updatedAt} with
+     * the transition timestamp — exactly the marker {@code RetroPhaseScheduler#checkVoteTimers}
+     * relies on.
+     */
+    @Test
+    void voteTimerExpiry_autoTransitionsToAction() throws Exception {
+        String sessionId = createSessionWithVoteTimer(1);
+        advanceToVote(sessionId);
+
+        await().atMost(Duration.ofSeconds(5)).untilAsserted(() -> {
+            RetroPhase phase = sessionRepository.findById(UUID.fromString(sessionId)).orElseThrow().getCurrentPhase();
+            assertThat(phase).isEqualTo(RetroPhase.ACTION);
+        });
+    }
+
+    /**
+     * Given a session created with NO configured vote timer (manual closure only) and already in
+     * the VOTE phase, when time passes, then the scheduler never auto-transitions it — it stays
+     * in VOTE.
+     */
+    @Test
+    void noConfiguredVoteTimer_neverAutoTransitionsOutOfVote() throws Exception {
+        String sessionId = createSessionWithoutTimer();
+        advanceToVote(sessionId);
+
+        Thread.sleep(1500);
+
+        RetroPhase phase = sessionRepository.findById(UUID.fromString(sessionId)).orElseThrow().getCurrentPhase();
+        assertThat(phase).isEqualTo(RetroPhase.VOTE);
+    }
+
+    /** Force-advances a session directly to VOTE, refreshing {@code updatedAt} via the entity's own {@code @PreUpdate}. */
+    private void advanceToVote(final String sessionId) {
+        RetroSession session = sessionRepository.findById(UUID.fromString(sessionId)).orElseThrow();
+        session.setCurrentPhase(RetroPhase.VOTE);
+        sessionRepository.save(session);
+    }
+
+    private String createSessionWithVoteTimer(final int timerSeconds) throws Exception {
+        MvcResult result = mockMvc.perform(
+                        post("/retro/sessions")
+                                .header("Authorization", "Bearer " + facilitatorToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {"title":"Timed Retro","format":"START_STOP_CONTINUE","teamId":%d,
+                                         "voteTimerSeconds":%d}
+                                        """.formatted(teamId, timerSeconds)))
+                .andExpect(status().isCreated())
+                .andReturn();
+        return objectMapper.readTree(result.getResponse().getContentAsString()).get("id").asText();
     }
 
     private String createSessionWithContributionTimer(final int timerSeconds) throws Exception {

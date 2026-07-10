@@ -11,6 +11,8 @@ import fr.pivot.agilite.retro.session.RetroFormat;
 import fr.pivot.agilite.retro.session.RetroPhase;
 import fr.pivot.agilite.retro.session.RetroSession;
 import fr.pivot.agilite.retro.session.RetroSessionRepository;
+import fr.pivot.agilite.retro.vote.RetroVoteRepository;
+import fr.pivot.agilite.retro.vote.dto.RankedCard;
 import fr.pivot.agilite.retro.ws.RetroSessionDestinations;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -36,8 +38,9 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * Unit tests for {@link RetroPhaseService} (US20.1.2a) — facilitator/tenant/phase gating for
- * manual contribution close and reveal, plus the reveal grouping-by-column logic.
+ * Unit tests for {@link RetroPhaseService} (US20.1.2a/b) — facilitator/tenant/phase gating for
+ * manual contribution close, reveal, vote-open/close, plus the reveal grouping-by-column and
+ * vote-count ranking logic.
  */
 class RetroPhaseServiceTest {
 
@@ -47,6 +50,7 @@ class RetroPhaseServiceTest {
 
     private RetroSessionRepository sessionRepository;
     private RetroCardRepository cardRepository;
+    private RetroVoteRepository voteRepository;
     private SimpMessagingTemplate messagingTemplate;
     private RetroPhaseService service;
 
@@ -54,10 +58,13 @@ class RetroPhaseServiceTest {
     void setUp() {
         sessionRepository = mock(RetroSessionRepository.class);
         cardRepository = mock(RetroCardRepository.class);
+        voteRepository = mock(RetroVoteRepository.class);
         messagingTemplate = mock(SimpMessagingTemplate.class);
         Clock clock = Clock.fixed(Instant.parse("2026-07-10T12:00:00Z"), ZoneOffset.UTC);
-        service = new RetroPhaseService(sessionRepository, cardRepository, messagingTemplate, clock);
+        service = new RetroPhaseService(sessionRepository, cardRepository, voteRepository, messagingTemplate, clock);
         when(sessionRepository.save(any(RetroSession.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(cardRepository.findBySessionIdOrderByCreatedAtAsc(any(UUID.class))).thenReturn(List.of());
+        when(voteRepository.countVotesBySession(any(UUID.class))).thenReturn(List.of());
     }
 
     // -------------------------------------------------------------------------
@@ -229,6 +236,195 @@ class RetroPhaseServiceTest {
 
         assertThatThrownBy(() -> service.reveal(session.getId(), OTHER_USER_ID, TENANT_ID))
                 .isInstanceOf(RetroFacilitatorOnlyException.class);
+    }
+
+    // -------------------------------------------------------------------------
+    // openVote
+    // -------------------------------------------------------------------------
+
+    /**
+     * Given the facilitator, when they open the vote phase on a REVUE-phase session, then it
+     * transitions to VOTE and PHASE_CHANGED is broadcast.
+     */
+    @Test
+    void openVote_asFacilitatorInRevuePhase_transitionsAndBroadcasts() {
+        RetroSession session = session(RetroPhase.REVUE);
+        when(sessionRepository.findById(session.getId())).thenReturn(Optional.of(session));
+
+        RetroPhase result = service.openVote(session.getId(), FACILITATOR_ID, TENANT_ID);
+
+        assertThat(result).isEqualTo(RetroPhase.VOTE);
+        assertThat(session.getCurrentPhase()).isEqualTo(RetroPhase.VOTE);
+        ArgumentCaptor<Object> captor = ArgumentCaptor.forClass(Object.class);
+        verify(messagingTemplate).convertAndSend(eq(RetroSessionDestinations.roomTopic(session.getId())), captor.capture());
+        PhaseChangedEvent event = (PhaseChangedEvent) captor.getValue();
+        assertThat(event.previousPhase()).isEqualTo(RetroPhase.REVUE);
+        assertThat(event.currentPhase()).isEqualTo(RetroPhase.VOTE);
+        assertThat(event.rankedCards()).isNull();
+    }
+
+    /**
+     * Given a caller who is not the facilitator, when they attempt to open the vote phase, then
+     * it is rejected and no transition happens.
+     */
+    @Test
+    void openVote_notFacilitator_throwsAndDoesNotTransition() {
+        RetroSession session = session(RetroPhase.REVUE);
+        when(sessionRepository.findById(session.getId())).thenReturn(Optional.of(session));
+
+        assertThatThrownBy(() -> service.openVote(session.getId(), OTHER_USER_ID, TENANT_ID))
+                .isInstanceOf(RetroFacilitatorOnlyException.class);
+        assertThat(session.getCurrentPhase()).isEqualTo(RetroPhase.REVUE);
+    }
+
+    /**
+     * Given a session still in CONTRIBUTION (reveal never triggered), when the facilitator
+     * attempts to open the vote phase, then it is rejected with a conflict.
+     */
+    @Test
+    void openVote_stillInContribution_throwsInvalidTransition() {
+        RetroSession session = session(RetroPhase.CONTRIBUTION);
+        when(sessionRepository.findById(session.getId())).thenReturn(Optional.of(session));
+
+        assertThatThrownBy(() -> service.openVote(session.getId(), FACILITATOR_ID, TENANT_ID))
+                .isInstanceOf(RetroInvalidPhaseTransitionException.class);
+    }
+
+    // -------------------------------------------------------------------------
+    // closeVote / autoTransitionToAction — including ranking
+    // -------------------------------------------------------------------------
+
+    /**
+     * Given the facilitator, when they close the vote phase on a VOTE-phase session, then it
+     * transitions to ACTION and PHASE_CHANGED is broadcast carrying the vote-count ranking.
+     */
+    @Test
+    void closeVote_asFacilitatorInVotePhase_transitionsAndBroadcastsRanking() {
+        RetroSession session = session(RetroPhase.VOTE);
+        when(sessionRepository.findById(session.getId())).thenReturn(Optional.of(session));
+        UUID card1 = UUID.randomUUID();
+        when(cardRepository.findBySessionIdOrderByCreatedAtAsc(session.getId())).thenReturn(List.of(
+                cardWithId(card1, session.getId(), "went-well", "Good pace", false, FACILITATOR_ID)));
+        when(voteRepository.countVotesBySession(session.getId())).thenReturn(List.of(voteCount(card1, 5L)));
+
+        RetroPhase result = service.closeVote(session.getId(), FACILITATOR_ID, TENANT_ID);
+
+        assertThat(result).isEqualTo(RetroPhase.ACTION);
+        assertThat(session.getCurrentPhase()).isEqualTo(RetroPhase.ACTION);
+        ArgumentCaptor<Object> captor = ArgumentCaptor.forClass(Object.class);
+        verify(messagingTemplate).convertAndSend(eq(RetroSessionDestinations.roomTopic(session.getId())), captor.capture());
+        PhaseChangedEvent event = (PhaseChangedEvent) captor.getValue();
+        assertThat(event.previousPhase()).isEqualTo(RetroPhase.VOTE);
+        assertThat(event.currentPhase()).isEqualTo(RetroPhase.ACTION);
+        assertThat(event.rankedCards()).hasSize(1);
+        assertThat(event.rankedCards().get(0).cardId()).isEqualTo(card1);
+        assertThat(event.rankedCards().get(0).voteCount()).isEqualTo(5L);
+    }
+
+    /**
+     * Given several cards with differing vote counts (including one with zero votes) and a tie
+     * between two cards, when the ranking is built, then it is ordered by vote count descending,
+     * the zero-vote card is last, and the tie is broken by original submission order.
+     */
+    @Test
+    void closeVote_ranking_ordersByVoteCountDescendingWithZeroVotesLastAndStableTieBreak() {
+        RetroSession session = session(RetroPhase.VOTE);
+        when(sessionRepository.findById(session.getId())).thenReturn(Optional.of(session));
+        UUID card1 = UUID.randomUUID();
+        UUID card2 = UUID.randomUUID();
+        UUID card3 = UUID.randomUUID();
+        // Submission order: card1, card2, card3. card1 and card3 tie at 2 votes; card2 has none.
+        when(cardRepository.findBySessionIdOrderByCreatedAtAsc(session.getId())).thenReturn(List.of(
+                cardWithId(card1, session.getId(), "went-well", "First", false, FACILITATOR_ID),
+                cardWithId(card2, session.getId(), "went-well", "Never voted", false, FACILITATOR_ID),
+                cardWithId(card3, session.getId(), "went-well", "Third", false, FACILITATOR_ID)));
+        when(voteRepository.countVotesBySession(session.getId())).thenReturn(List.of(
+                voteCount(card1, 2L), voteCount(card3, 2L)));
+
+        service.closeVote(session.getId(), FACILITATOR_ID, TENANT_ID);
+
+        ArgumentCaptor<Object> captor = ArgumentCaptor.forClass(Object.class);
+        verify(messagingTemplate).convertAndSend(eq(RetroSessionDestinations.roomTopic(session.getId())), captor.capture());
+        List<RankedCard> ranking = ((PhaseChangedEvent) captor.getValue()).rankedCards();
+        assertThat(ranking).extracting(RankedCard::cardId).containsExactly(card1, card3, card2);
+        assertThat(ranking.get(2).voteCount()).isZero();
+    }
+
+    /**
+     * Given a caller who is not the facilitator, when they attempt to close the vote phase, then
+     * it is rejected and no transition happens.
+     */
+    @Test
+    void closeVote_notFacilitator_throwsAndDoesNotTransition() {
+        RetroSession session = session(RetroPhase.VOTE);
+        when(sessionRepository.findById(session.getId())).thenReturn(Optional.of(session));
+
+        assertThatThrownBy(() -> service.closeVote(session.getId(), OTHER_USER_ID, TENANT_ID))
+                .isInstanceOf(RetroFacilitatorOnlyException.class);
+        assertThat(session.getCurrentPhase()).isEqualTo(RetroPhase.VOTE);
+    }
+
+    /**
+     * Given a session still in REVUE (vote never opened), when the facilitator attempts to close
+     * the vote phase, then it is rejected with a conflict.
+     */
+    @Test
+    void closeVote_stillInRevue_throwsInvalidTransition() {
+        RetroSession session = session(RetroPhase.REVUE);
+        when(sessionRepository.findById(session.getId())).thenReturn(Optional.of(session));
+
+        assertThatThrownBy(() -> service.closeVote(session.getId(), FACILITATOR_ID, TENANT_ID))
+                .isInstanceOf(RetroInvalidPhaseTransitionException.class);
+    }
+
+    /**
+     * Given a session in VOTE, when the scheduler triggers the auto-transition, then it moves to
+     * ACTION, broadcasting PHASE_CHANGED with the ranking — no caller identity needed.
+     */
+    @Test
+    void autoTransitionToAction_votePhase_transitionsAndBroadcastsRanking() {
+        RetroSession session = session(RetroPhase.VOTE);
+        when(sessionRepository.findById(session.getId())).thenReturn(Optional.of(session));
+
+        service.autoTransitionToAction(session.getId());
+
+        assertThat(session.getCurrentPhase()).isEqualTo(RetroPhase.ACTION);
+        ArgumentCaptor<Object> captor = ArgumentCaptor.forClass(Object.class);
+        verify(messagingTemplate).convertAndSend(eq(RetroSessionDestinations.roomTopic(session.getId())), captor.capture());
+        assertThat(((PhaseChangedEvent) captor.getValue()).rankedCards()).isNotNull();
+    }
+
+    /**
+     * Given a session already advanced past VOTE (e.g. manually closed already), when the
+     * scheduler's auto-transition runs, then it is a no-op — no double transition, no duplicate
+     * broadcast.
+     */
+    @Test
+    void autoTransitionToAction_alreadyPastVote_isNoOp() {
+        RetroSession session = session(RetroPhase.ACTION);
+        when(sessionRepository.findById(session.getId())).thenReturn(Optional.of(session));
+
+        service.autoTransitionToAction(session.getId());
+
+        verify(sessionRepository, never()).save(any());
+        verify(messagingTemplate, never()).convertAndSend(anyString(), any(Object.class));
+    }
+
+    /**
+     * Builds a test double for {@link RetroVoteRepository.CardVoteCount}.
+     */
+    private static RetroVoteRepository.CardVoteCount voteCount(final UUID cardId, final long count) {
+        return new RetroVoteRepository.CardVoteCount() {
+            @Override
+            public UUID getCardId() {
+                return cardId;
+            }
+
+            @Override
+            public long getVoteCount() {
+                return count;
+            }
+        };
     }
 
     /**

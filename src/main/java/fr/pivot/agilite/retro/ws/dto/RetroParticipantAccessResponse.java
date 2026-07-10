@@ -17,6 +17,12 @@ package fr.pivot.agilite.retro.ws.dto;
  *                                     un-masked {@code CARD_ADDED}), or {@code null} if the
  *                                     caller is not the facilitator
  * @param submitDestination            the destination to SEND a new card submission to
+ * @param voteDestination              the destination to SEND a dot-vote cast to (US20.1.2b)
+ * @param voteUncastDestination        the destination to SEND a dot-vote removal to (US20.1.2b)
+ * @param voteBalanceDestination       the destination to SEND an (empty-body) balance query to;
+ *                                     the answer arrives on the caller's private
+ *                                     {@code /user/queue/votes} as a {@code VOTE_BALANCE} event
+ *                                     (US20.1.2b)
  */
 public record RetroParticipantAccessResponse(
         String accessToken,
@@ -24,5 +30,8 @@ public record RetroParticipantAccessResponse(
         boolean facilitator,
         String topicDestination,
         String facilitatorTopicDestination,
-        String submitDestination) {
+        String submitDestination,
+        String voteDestination,
+        String voteUncastDestination,
+        String voteBalanceDestination) {
 }
