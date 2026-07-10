@@ -160,7 +160,7 @@ jobs:
       - name: Build & load Docker image (amd64)
         id: build-docker
         env:
-          # US20.1.1 : credentials GitHub Packages pour fr.pivot:pivot-core-starter, passées au
+          # Credentials GitHub Packages pour fr.pivot:pivot-core-starter, passées au
           # build Docker via secrets BuildKit (jamais en --build-arg, jamais dans les layers).
           GITHUB_ACTOR: ${{ github.actor }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

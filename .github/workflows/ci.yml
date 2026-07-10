@@ -40,7 +40,7 @@ jobs:
 
       - name: Compile + Checkstyle + SpotBugs
         env:
-          # US20.1.1 — fr.pivot:pivot-core-starter (GitHub Packages, repo pivot-core) requires
+          # fr.pivot:pivot-core-starter (GitHub Packages, repo pivot-core) requires
           # authentication even for read access, resolved via .mvn/settings.xml's
           # "pivot-core-packages" server (${env.GITHUB_TOKEN}) — same convention as
           # pivot-collaboratif-core (EN08.3).
@@ -79,6 +79,9 @@ jobs:
 
       - name: Run tests with coverage
         env:
+          # US14.1.1: resolves fr.pivot:pivot-core-starter — see the note on the
+          # "Compile + Checkstyle + SpotBugs" step above.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Datasource is provided by Testcontainers (@ServiceConnection) — no static URL needed.
           SPRING_REDIS_HOST: localhost
           SPRING_REDIS_PORT: 6379

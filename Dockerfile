@@ -4,7 +4,7 @@ WORKDIR /workspace
 COPY .mvn/ .mvn/
 COPY mvnw pom.xml ./
 RUN chmod +x mvnw
-# US20.1.1 : fr.pivot:pivot-core-starter (GitHub Packages, repo pivot-core) exige une
+# fr.pivot:pivot-core-starter (GitHub Packages, repo pivot-core) exige une
 # authentification même en lecture — GITHUB_ACTOR/GITHUB_TOKEN injectés comme secrets
 # BuildKit (jamais dans les layers ni le build cache) et lus par .mvn/settings.xml
 # (server-id "pivot-core-packages", voir ce fichier). Même convention que

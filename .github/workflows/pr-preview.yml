@@ -42,7 +42,7 @@ jobs:
       - name: PITest — mutation coverage
         continue-on-error: true
         env:
-          # US20.1.1 — see ci.yml's "Compile + Checkstyle + SpotBugs" step for why this is needed.
+          # See ci.yml's "Compile + Checkstyle + SpotBugs" step for why this is needed.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: mvn --no-transfer-progress test-compile pitest:mutationCoverage -Pmutation -Dmaven.compiler.release=24
 
@@ -89,7 +89,7 @@ jobs:
       # Une image qui casserait le gate Trivy de la Release casse la PR -> zéro surprise.
       - name: Build & load preview image (amd64)
         env:
-          # US20.1.1 — credentials GitHub Packages pour fr.pivot:pivot-core-starter, passées au
+          # Credentials GitHub Packages pour fr.pivot:pivot-core-starter, passées au
           # build Docker via secrets BuildKit (jamais en --build-arg, jamais dans les layers).
           GITHUB_ACTOR: ${{ github.actor }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
