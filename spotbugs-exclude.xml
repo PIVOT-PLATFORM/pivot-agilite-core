@@ -38,6 +38,14 @@
                  TeamMemberRepository, JoinCodeGenerator). -->
             <Package name="fr.pivot.agilite.retro.session"/>
             <Package name="fr.pivot.agilite.retro.session.dto"/>
+            <!-- US09.1.1 — Planning poker rooms: PokerRoom is a JPA entity (mutable
+                 getters/setters required by Hibernate); PokerRoomService/PokerRoomController
+                 store constructor-injected singleton beans (repository, Clock). RoomResponse's
+                 cardValues is always PokerCardDeck.FIBONACCI_VALUES, an unmodifiable
+                 List.of(...) constant, never independently mutated — SpotBugs cannot prove this
+                 statically from the List<String> field type alone. -->
+            <Package name="fr.pivot.agilite.poker"/>
+            <Package name="fr.pivot.agilite.poker.dto"/>
         </Or>
     </Match>
 

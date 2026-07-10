@@ -10,18 +10,26 @@ Déployé dans sa propre JVM, isolée des autres modules (fault isolation — si
 (auth, tenant, équipes, registre de modules) exposés par **pivot-core** ; le frontend Angular
 correspondant est **pivot-agilite-ui**. La documentation générale vit dans **pivot-docs**.
 
-**⚠️ Gap connu — `fr.pivot:pivot-core-starter` n'est pas consommable en l'état.** Le plan de
-la plateforme prévoit que ce module dépende de `fr.pivot:pivot-core-starter` (GitHub Packages)
-pour `TenantContext`, `@TenantAware`, l'interface `PivotModule`, etc. Vérification faite au
-bootstrap (2026-07) : pivot-core ne publie **aucun artefact sous ces coordonnées**. Son
-`pom.xml` n'a ni module séparé ni profil `release` malgré ce que documente son propre
-CLAUDE.md ; `release.yml` publie en réalité `fr.pivot:pivot-core:<version>` — le JAR
-applicatif complet (re-packagé exécutable par `spring-boot-maven-plugin`, donc de toute façon
-inconsommable comme dépendance de compilation classique : ses classes vivent sous
-`BOOT-INF/classes/`, invisibles pour un `classpath` Maven standard). Ce module ne déclare donc
-**aucune dépendance** vers pivot-core pour l'instant — à ajouter dès que pivot-core publie une
-vraie librairie `pivot-core-starter` (Enabler `EN17.1`, backlog pivot-docs). Ne pas ajouter de
-dépendance fictive pour "faire comme si".
+### Dépendance `pivot-core-starter` — état réel
+
+`pivot-core` publie réellement `fr.pivot:pivot-core-starter` depuis la version **0.27.0**
+(EN17.1, ADR-022) sur GitHub Packages du repo `pivot-core` — la note de gap ci-dessous prédatait
+la complétion d'EN17.1 et est obsolète. Ce module en dépend (`pom.xml`, version épinglée
+explicitement — jamais devinée) depuis Sprint 8 (US20.1.1, US09.1.1), pour
+`fr.pivot.core.auth.AuthenticatedPrincipal`/`AuthenticatedPrincipalResolver` (consommé par
+`fr.pivot.agilite.auth.TokenValidationService`) et `fr.pivot.core.team.Team`/`TeamMember`.
+**Épinglé à 0.28.0** (pas 0.27.1, la version que `pivot-collaboratif-core` avait épinglée pour
+EN08.3) : 0.28.0 (`pivot-core#211`) marque les dépendances Spring Security du starter
+`<optional>true</optional>`, ce qui évite complètement d'imposer l'auto-configuration Spring
+Security à ce repo — **aucun `SecurityConfig` n'existe ici**, contrairement au workaround
+permit-all qu'a dû ajouter `pivot-collaboratif-core` à 0.27.1 (vérifié via `mvn dependency:tree` :
+aucun jar `spring-security-*` sur le classpath).
+
+Résolution GitHub Packages : `<repositories>` (`pom.xml`, id `pivot-core-packages`) +
+`.mvn/settings.xml`/`.mvn/maven.config` (credentials `${env.GITHUB_ACTOR}`/`${env.GITHUB_TOKEN}`)
+— mêmes fichiers que `pivot-collaboratif-core`. **Toujours épingler une version réelle et
+publiée** — vérifier l'état de publication (`pivot-core/pom.xml`, `gh release list`) avant toute
+mise à jour, jamais une version devinée.
 
 **Architecture BDD :** schéma `agilite` (Flyway, propriétaire de ce repo). FK cross-schéma
 autorisées **uniquement** vers `public.tenants(id)` et `public.teams(id)` (entités pivot-core)
@@ -59,7 +67,7 @@ Concise et directe. Techniquement précise. Pas de récapitulatifs inutiles.
 | CI/CD | GitHub Actions · SonarCloud · Semantic Release · Plumber |
 | Déploiement | Docker · Docker Compose · JVM dédiée (fault isolation) |
 | Frontend | → **pivot-agilite-ui** (Angular 22 · lazy-loaded dans pivot-ui) |
-| Auth / Tenant / Modules | → **pivot-core** (voir gap `pivot-core-starter` ci-dessus — non consommable pour l'instant) |
+| Auth / Tenant / Modules | → **pivot-core** (voir section dépendance `pivot-core-starter` ci-dessus — `fr.pivot.core.auth`/`fr.pivot.core.team` consommés depuis Sprint 8) |
 
 ---
 
@@ -70,7 +78,11 @@ pivot-agilite-core/
 ├── src/
 │   ├── main/java/fr/pivot/agilite/
 │   │   ├── PivotAgiliteApplication.java
-│   │   └── (packages métier à venir : capacity/, standup/, poker/…)
+│   │   ├── auth/, context/               # bearer-token auth (pattern EN08.3, Sprint 8)
+│   │   ├── config/, exception/           # WebSocketConfig, WebMvcConfig, ClockConfig, GlobalExceptionHandler
+│   │   ├── poker/, poker/ws/             # US09.1.1 (rooms) + EN09.1 (isolation WebSocket)
+│   │   ├── retro/                        # US20.1.1 (rétrospectives)
+│   │   └── ws/                           # EN09.1 — plumbing WebSocket partagé
 │   ├── main/resources/
 │   │   ├── application.yml, application-test.yml
 │   │   └── db/migration/      # Flyway schéma agilite — voir règle V1 unique ci-dessous
@@ -78,20 +90,20 @@ pivot-agilite-core/
 ├── .github/
 │   ├── workflows/
 │   └── ISSUE_TEMPLATE/
+├── .mvn/settings.xml, .mvn/maven.config  # credentials GitHub Packages (pivot-core-starter)
 ├── .plumber.yaml
 └── Dockerfile
 ```
 
-**Maven :** projet single-module, bootstrap uniquement — aucun package métier encore créé.
+**Maven :** projet single-module.
 
 **Migrations Flyway — fichier V1 unique avant la BETA :** tant que le schéma `agilite` n'est
 pas stabilisé (avant la première BETA du produit), tout changement de schéma est plié dans
 l'unique `V1__schema_init.sql` plutôt que d'ajouter un `V2__`/`V3__…` séparé — pas d'historique
 de migrations incrémentales à maintenir tant que rien n'est en prod. Ne pas créer de nouveau
 fichier de migration numéroté sans feu vert explicite du mainteneur (déclenché au démarrage de
-la BETA). Aujourd'hui `V1__schema_init.sql` ne contient que `CREATE SCHEMA IF NOT EXISTS
-agilite;` — aucune table métier (bootstrap infra uniquement, développement des features pas
-encore démarré).
+la BETA). `V1__schema_init.sql` contient désormais, en plus du schéma : `agilite.retro_sessions`/
+`retro_cards` (US20.1.1) et `agilite.poker_rooms` (US09.1.1).
 
 Frontend Angular → **pivot-agilite-ui**. Documentation → **pivot-docs**. Auth/tenant/modules
 partagés → **pivot-core**.
@@ -401,9 +413,10 @@ dossier `gates/`). Le statut vit dans le champ **Stage** du frontmatter US (pivo
 ## Règle transversale sécurité — Isolation tenant
 
 **Tout endpoint `/api/agilite/*` :**
-- Extrait le `tenantId` **exclusivement** du `TenantContext` propagé par pivot-core (une fois
-  la dépendance `pivot-core-starter` réellement consommable — voir gap en tête de fichier ;
-  en attendant, aucun endpoint métier n'existe encore)
+- Extrait le `tenantId`/`userId` **exclusivement** du `RequestPrincipal` résolu depuis le token
+  porteur (`fr.pivot.agilite.context.RequestPrincipalResolver` — délègue à
+  `fr.pivot.core.auth.AuthenticatedPrincipalResolver` du starter, implémenté par
+  `TokenValidationService`)
 - N'accepte **jamais** un `tenantId` ou `userId` venant du body JSON, d'un query param ou d'un header custom
 - Si `{resourceId}` dans le path → vérifier l'appartenance au tenant courant **avant** tout traitement
 - Appartenance invalide → **404** (pas 403 — ne pas confirmer l'existence de la ressource cross-tenant)
