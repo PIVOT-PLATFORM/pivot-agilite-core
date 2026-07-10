@@ -5,7 +5,9 @@ import fr.pivot.agilite.poker.exception.GuestSessionExpiredException;
 import fr.pivot.agilite.poker.exception.InviteCodeNotFoundException;
 import fr.pivot.agilite.poker.exception.PokerFacilitatorOnlyException;
 import fr.pivot.agilite.poker.exception.RoomNotFoundException;
+import fr.pivot.agilite.poker.exception.TicketAlreadyRevealedException;
 import fr.pivot.agilite.poker.exception.TicketFacilitatorOnlyException;
+import fr.pivot.agilite.poker.exception.TicketNotFoundException;
 import jakarta.validation.ConstraintViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
@@ -28,7 +30,9 @@ import java.util.Map;
  * RetroCustomFormatIdNotAllowedException}), planning poker room lookup failures (US09.1.1, {@link
  * RoomNotFoundException}) and join-by-code failures (US09.1.2, {@link
  * InviteCodeNotFoundException}), ticket/vote facilitator and conflict failures (US09.2.1, {@link
- * TicketFacilitatorOnlyException}, {@link ActiveTicketExistsException}), wheel/team domain
+ * TicketFacilitatorOnlyException}, {@link ActiveTicketExistsException}), ticket revelation
+ * lookup/conflict failures (US09.2.2, {@link TicketNotFoundException}, {@link
+ * TicketAlreadyRevealedException}), wheel/team domain
  * exceptions (US14.1.1, {@link
  * WheelNotFoundException}, {@link TeamNotFoundException}, {@link WheelValidationException}), the
  * US14.2.1 weighted anti-repeat draw's defensive empty-wheel guard ({@link
@@ -140,6 +144,39 @@ public class GlobalExceptionHandler {
         problem.setTitle("Active ticket exists");
         problem.setDetail(ex.getMessage());
         problem.setProperties(Map.of("code", "ACTIVE_TICKET_EXISTS"));
+        return problem;
+    }
+
+    /**
+     * Returns HTTP 404 when a planning poker ticket cannot be found for a given room (US09.2.2)
+     * — either unknown, or belonging to a different room than the one in the request path. Both
+     * causes are deliberately indistinguishable, same anti-enumeration posture as {@link
+     * #handleRoomNotFound}.
+     *
+     * @param ex the thrown exception
+     * @return a 404 problem detail
+     */
+    @ExceptionHandler(TicketNotFoundException.class)
+    public ProblemDetail handleTicketNotFound(final TicketNotFoundException ex) {
+        ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.NOT_FOUND);
+        problem.setTitle("Ticket not found");
+        problem.setDetail(ex.getMessage());
+        return problem;
+    }
+
+    /**
+     * Returns HTTP 409 when the facilitator attempts to reveal a ticket that has already been
+     * revealed (US09.2.2) — revelation is a one-time, non-idempotent transition.
+     *
+     * @param ex the thrown exception
+     * @return a 409 problem detail with {@code { "code": "TICKET_ALREADY_REVEALED" } }
+     */
+    @ExceptionHandler(TicketAlreadyRevealedException.class)
+    public ProblemDetail handleTicketAlreadyRevealed(final TicketAlreadyRevealedException ex) {
+        ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.CONFLICT);
+        problem.setTitle("Ticket already revealed");
+        problem.setDetail(ex.getMessage());
+        problem.setProperties(Map.of("code", "TICKET_ALREADY_REVEALED"));
         return problem;
     }
 

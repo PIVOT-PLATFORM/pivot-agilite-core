@@ -1,5 +1,7 @@
 package fr.pivot.agilite.poker.ticket;
 
+import fr.pivot.agilite.poker.vote.PokerVote;
+import fr.pivot.agilite.poker.vote.PokerVoteRepository;
 import fr.pivot.agilite.testsupport.PlatformAuthTestSupport;
 import fr.pivot.agilite.testsupport.PlatformAuthTestSupport.AuthFixture;
 import org.junit.jupiter.api.BeforeEach;
@@ -20,6 +22,9 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
+
+import java.time.Instant;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -60,6 +65,12 @@ class PokerTicketControllerIT {
 
     @Autowired
     private WebApplicationContext wac;
+
+    @Autowired
+    private PokerVoteRepository voteRepository;
+
+    @Autowired
+    private PokerTicketRepository ticketRepository;
 
     private MockMvc mockMvc;
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -243,6 +254,162 @@ class PokerTicketControllerIT {
                 .andExpect(status().isUnauthorized());
     }
 
+    /**
+     * Security-critical AC: given a {@code VOTING} ticket with cast votes, when the facilitator
+     * reveals it, then the ticket transitions in the database from {@code VOTING}/{@code
+     * revealedAt == null} to {@code REVEALED}/{@code revealedAt} non-null, the response carries
+     * every raw vote value and the computed consensus, and the raw JSON never carries a
+     * {@code participantKey} or any other identity field.
+     */
+    @Test
+    void revealTicket_asFacilitatorWithVotes_transitionsStatusAndReturnsConsensus() throws Exception {
+        String roomId = createRoom(facilitatorToken);
+        String ticketId = createTicket(roomId, facilitatorToken, "Estimate JIRA-123");
+
+        assertThat(ticketRepository.findById(UUID.fromString(ticketId)).orElseThrow().getStatus())
+                .isEqualTo(PokerTicketStatus.VOTING);
+        assertThat(ticketRepository.findById(UUID.fromString(ticketId)).orElseThrow().getRevealedAt())
+                .isNull();
+
+        seedVote(ticketId, "3");
+        seedVote(ticketId, "5");
+        seedVote(ticketId, "5");
+
+        MvcResult result = mockMvc.perform(post(ROOMS_PATH + "/" + roomId + "/tickets/" + ticketId + "/reveal")
+                        .header("Authorization", "Bearer " + facilitatorToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(ticketId))
+                .andExpect(jsonPath("$.status").value("REVEALED"))
+                .andExpect(jsonPath("$.revealedAt").isNotEmpty())
+                .andExpect(jsonPath("$.values", org.hamcrest.Matchers.containsInAnyOrder("3", "5", "5")))
+                .andExpect(jsonPath("$.consensus.mean").value(4.3))
+                .andExpect(jsonPath("$.consensus.median").value(5.0))
+                .andExpect(jsonPath("$.consensus.majority").value("5"))
+                .andReturn();
+
+        String body = result.getResponse().getContentAsString();
+        assertThat(body).doesNotContain("participantKey").doesNotContain("userId");
+
+        PokerTicket persisted = ticketRepository.findById(UUID.fromString(ticketId)).orElseThrow();
+        assertThat(persisted.getStatus()).isEqualTo(PokerTicketStatus.REVEALED);
+        assertThat(persisted.getRevealedAt()).isNotNull();
+    }
+
+    /**
+     * Given a ticket with zero cast votes, when it is revealed, then it still succeeds with an
+     * empty {@code values} array and an all-{@code null} consensus (no completeness gate).
+     */
+    @Test
+    void revealTicket_noVotesCast_succeedsWithNullConsensus() throws Exception {
+        String roomId = createRoom(facilitatorToken);
+        String ticketId = createTicket(roomId, facilitatorToken, "Estimate JIRA-123");
+
+        mockMvc.perform(post(ROOMS_PATH + "/" + roomId + "/tickets/" + ticketId + "/reveal")
+                        .header("Authorization", "Bearer " + facilitatorToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.values", org.hamcrest.Matchers.empty()))
+                .andExpect(jsonPath("$.consensus.mean").doesNotExist())
+                .andExpect(jsonPath("$.consensus.median").doesNotExist())
+                .andExpect(jsonPath("$.consensus.majority").doesNotExist());
+    }
+
+    /**
+     * Security AC: given an authenticated, same-tenant caller who is not the room's facilitator,
+     * when {@code POST .../reveal} is called, then it returns HTTP 403 with code {@code
+     * FACILITATOR_ONLY} (the same mechanism as ticket creation, US09.2.1) and the ticket is left
+     * unchanged ({@code VOTING}, {@code revealedAt == null}).
+     */
+    @Test
+    void revealTicket_notFacilitator_returns403AndLeavesTicketUnchanged() throws Exception {
+        String roomId = createRoom(facilitatorToken);
+        String ticketId = createTicket(roomId, facilitatorToken, "Estimate JIRA-123");
+
+        mockMvc.perform(post(ROOMS_PATH + "/" + roomId + "/tickets/" + ticketId + "/reveal")
+                        .header("Authorization", "Bearer " + otherUserToken))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("FACILITATOR_ONLY"));
+
+        PokerTicket persisted = ticketRepository.findById(UUID.fromString(ticketId)).orElseThrow();
+        assertThat(persisted.getStatus()).isEqualTo(PokerTicketStatus.VOTING);
+        assertThat(persisted.getRevealedAt()).isNull();
+    }
+
+    /**
+     * Security: given a room belonging to another tenant, when {@code POST .../reveal} is
+     * called, then it returns HTTP 404 — never confirms cross-tenant existence, never 403.
+     */
+    @Test
+    void revealTicket_crossTenantRoom_returns404() throws Exception {
+        String roomId = createRoom(facilitatorToken);
+        String ticketId = createTicket(roomId, facilitatorToken, "Estimate JIRA-123");
+
+        mockMvc.perform(post(ROOMS_PATH + "/" + roomId + "/tickets/" + ticketId + "/reveal")
+                        .header("Authorization", "Bearer " + otherTenantToken))
+                .andExpect(status().isNotFound());
+    }
+
+    /**
+     * Error case: given a {@code ticketId} that does not exist, when {@code POST .../reveal} is
+     * called, then it returns HTTP 404.
+     */
+    @Test
+    void revealTicket_ticketDoesNotExist_returns404() throws Exception {
+        String roomId = createRoom(facilitatorToken);
+        String unknownTicketId = UUID.randomUUID().toString();
+
+        mockMvc.perform(post(ROOMS_PATH + "/" + roomId + "/tickets/" + unknownTicketId + "/reveal")
+                        .header("Authorization", "Bearer " + facilitatorToken))
+                .andExpect(status().isNotFound());
+    }
+
+    /**
+     * Error case: given a ticket that exists but belongs to a different room than the one in the
+     * request path, when {@code POST .../reveal} is called, then it returns HTTP 404 — never
+     * confirms cross-room existence.
+     */
+    @Test
+    void revealTicket_crossRoomTicket_returns404() throws Exception {
+        String roomId = createRoom(facilitatorToken);
+        String ticketId = createTicket(roomId, facilitatorToken, "Estimate JIRA-123");
+        String otherRoomId = createRoom(facilitatorToken);
+
+        mockMvc.perform(post(ROOMS_PATH + "/" + otherRoomId + "/tickets/" + ticketId + "/reveal")
+                        .header("Authorization", "Bearer " + facilitatorToken))
+                .andExpect(status().isNotFound());
+    }
+
+    /**
+     * Error case: given a ticket already {@code REVEALED}, when {@code POST .../reveal} is
+     * called a second time, then it returns HTTP 409 with code {@code TICKET_ALREADY_REVEALED}.
+     */
+    @Test
+    void revealTicket_alreadyRevealed_returns409() throws Exception {
+        String roomId = createRoom(facilitatorToken);
+        String ticketId = createTicket(roomId, facilitatorToken, "Estimate JIRA-123");
+
+        mockMvc.perform(post(ROOMS_PATH + "/" + roomId + "/tickets/" + ticketId + "/reveal")
+                        .header("Authorization", "Bearer " + facilitatorToken))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(post(ROOMS_PATH + "/" + roomId + "/tickets/" + ticketId + "/reveal")
+                        .header("Authorization", "Bearer " + facilitatorToken))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("TICKET_ALREADY_REVEALED"));
+    }
+
+    /**
+     * Error case: given the Authorization bearer header is absent, when {@code POST
+     * .../reveal} is called, then it returns HTTP 401.
+     */
+    @Test
+    void revealTicket_missingAuthorization_returns401() throws Exception {
+        String roomId = createRoom(facilitatorToken);
+        String ticketId = createTicket(roomId, facilitatorToken, "Estimate JIRA-123");
+
+        mockMvc.perform(post(ROOMS_PATH + "/" + roomId + "/tickets/" + ticketId + "/reveal"))
+                .andExpect(status().isUnauthorized());
+    }
+
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
@@ -267,5 +434,17 @@ class PokerTicketControllerIT {
                 .andReturn();
         JsonNode body = objectMapper.readTree(result.getResponse().getContentAsString());
         return body.get("id").asText();
+    }
+
+    /**
+     * Seeds a vote directly via {@link PokerVoteRepository} — votes normally arrive over STOMP
+     * (US09.2.1), but this IT only needs them to already exist in the database ahead of a reveal.
+     *
+     * @param ticketId the ticket to vote on
+     * @param value    the raw card value
+     */
+    private void seedVote(final String ticketId, final String value) {
+        voteRepository.save(new PokerVote(
+                UUID.fromString(ticketId), "participant-key-" + UUID.randomUUID(), value, Instant.now()));
     }
 }

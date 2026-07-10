@@ -2,6 +2,7 @@ package fr.pivot.agilite.poker.ticket;
 
 import fr.pivot.agilite.context.RequestPrincipal;
 import fr.pivot.agilite.poker.ticket.dto.CreateTicketRequest;
+import fr.pivot.agilite.poker.ticket.dto.RevealResponse;
 import fr.pivot.agilite.poker.ticket.dto.TicketResponse;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
@@ -17,7 +18,7 @@ import java.util.UUID;
 
 /**
  * REST controller exposing planning poker ticket operations under {@code
- * /poker/rooms/{roomId}/tickets} (US09.2.1).
+ * /poker/rooms/{roomId}/tickets} (US09.2.1 creation/lookup, US09.2.2 revelation).
  *
  * <p>All endpoints require a valid {@code Authorization: Bearer <token>} header, resolved into a
  * {@link RequestPrincipal} by {@code RequestPrincipalResolver}. Missing, malformed, or rejected
@@ -70,5 +71,22 @@ public class PokerTicketController {
             @PathVariable final UUID roomId,
             final RequestPrincipal principal) {
         return service.getCurrent(roomId, principal.tenantId()).orElse(null);
+    }
+
+    /**
+     * Reveals a ticket's votes and computes the consensus, restricted to that room's facilitator
+     * (US09.2.2). A transition of an existing resource, not a creation — HTTP 200, not 201.
+     *
+     * @param roomId    the target room
+     * @param ticketId  the ticket to reveal
+     * @param principal the resolved caller identity (user + tenant)
+     * @return the revealed ticket, its raw vote values, and the computed consensus, HTTP 200 OK
+     */
+    @PostMapping("/{ticketId}/reveal")
+    public RevealResponse reveal(
+            @PathVariable final UUID roomId,
+            @PathVariable final UUID ticketId,
+            final RequestPrincipal principal) {
+        return service.reveal(roomId, ticketId, principal.userId(), principal.tenantId());
     }
 }
