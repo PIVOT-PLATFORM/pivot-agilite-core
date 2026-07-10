@@ -29,6 +29,8 @@ import java.util.UUID;
  * @param sprintRef                 optional free-text sprint reference
  * @param expiresAt                 absolute expiry timestamp
  * @param createdAt                 creation timestamp
+ * @param customFormatId            tenant-owned custom format id (US20.2.1), non-{@code null}
+ *                                  iff {@code format} is {@code CUSTOM}
  */
 public record RetroSessionResponse(
         UUID id,
@@ -44,7 +46,8 @@ public record RetroSessionResponse(
         Integer voteCountPerParticipant,
         String sprintRef,
         Instant expiresAt,
-        Instant createdAt) {
+        Instant createdAt,
+        UUID customFormatId) {
 
     /**
      * Builds the response from a persisted {@link RetroSession} entity.
@@ -67,6 +70,7 @@ public record RetroSessionResponse(
                 session.getVoteCountPerParticipant(),
                 session.getSprintRef(),
                 session.getExpiresAt(),
-                session.getCreatedAt());
+                session.getCreatedAt(),
+                session.getCustomFormatId());
     }
 }

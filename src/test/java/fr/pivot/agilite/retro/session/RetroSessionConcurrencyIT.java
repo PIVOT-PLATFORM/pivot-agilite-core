@@ -96,7 +96,7 @@ class RetroSessionConcurrencyIT {
                 startLatch.await();
                 CreateRetroSessionRequest request = new CreateRetroSessionRequest(
                         "Concurrent Retro " + index, "START_STOP_CONTINUE", teamId,
-                        null, null, null, null, null);
+                        null, null, null, null, null, null);
                 return sessionService.create(request, facilitator.userId(), facilitator.tenantId());
             });
         }

@@ -89,7 +89,7 @@ class RetroCardsAnonymityConstraintIT {
         var response = sessionService.create(
                 new CreateRetroSessionRequest(
                         "Anonymity Test Retro", "START_STOP_CONTINUE", teamId,
-                        null, null, null, null, null),
+                        null, null, null, null, null, null),
                 author.userId(), author.tenantId());
 
         return new UUID[] {response.id()};

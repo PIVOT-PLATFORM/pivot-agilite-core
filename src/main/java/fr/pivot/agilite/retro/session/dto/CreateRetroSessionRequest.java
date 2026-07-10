@@ -5,6 +5,8 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.Size;
 
+import java.util.UUID;
+
 /**
  * Request body for creating a new retrospective session ({@code POST /retro/sessions}).
  *
@@ -32,6 +34,11 @@ import jakarta.validation.constraints.Size;
  *                                 present
  * @param voteCountPerParticipant  optional number of dot-votes per participant, must be positive
  *                                 if present; defaults to 3 in the service when {@code null}
+ * @param customFormatId           tenant-owned custom format id (US20.2.1); required and
+ *                                 resolved against the caller's tenant when {@code format} is
+ *                                 {@code "CUSTOM"}, rejected outright otherwise — cross-field
+ *                                 rule enforced in the service, not expressible as a single-field
+ *                                 constraint here
  */
 public record CreateRetroSessionRequest(
         @NotBlank(message = "INVALID_TITLE")
@@ -57,5 +64,7 @@ public record CreateRetroSessionRequest(
         Integer actionTimerSeconds,
 
         @Positive(message = "INVALID_VOTE_COUNT")
-        Integer voteCountPerParticipant) {
+        Integer voteCountPerParticipant,
+
+        UUID customFormatId) {
 }
