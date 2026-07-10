@@ -122,8 +122,8 @@ CREATE TABLE IF NOT EXISTS agilite.wheel (
 CREATE INDEX IF NOT EXISTS idx_wheel_tenant_id ON agilite.wheel(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_wheel_team_id   ON agilite.wheel(team_id);
 
--- lastDrawnEntryId: forward-looking anti-repeat marker for US14.2.1's weighted draw — always
--- NULL until that US lands, never written by anything in this migration/feature.
+-- lastDrawnEntryId: anti-repeat marker for US14.2.1's weighted draw — written by
+-- WheelDrawService after each spin, NULL until the wheel's first draw.
 CREATE TABLE IF NOT EXISTS agilite.wheel_entry (
     id             UUID         NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
     wheel_id       UUID         NOT NULL REFERENCES agilite.wheel(id) ON DELETE CASCADE,
@@ -145,3 +145,18 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_wheel_entry_free_text_label
 ALTER TABLE agilite.wheel
     ADD CONSTRAINT fk_wheel_last_drawn_entry
     FOREIGN KEY (last_drawn_entry_id) REFERENCES agilite.wheel_entry(id) ON DELETE SET NULL;
+
+-- US14.2.1: wheel_draw (draw history) — one row per spin (wheelId, entryId, timestamp), plus a
+-- frozen entry_label snapshot (survives the entry being removed later via PUT /wheels/{id}, same
+-- snapshot rationale as wheel_entry.label for TEAM_MEMBER entries). entry_id is nullable/ON
+-- DELETE SET NULL rather than CASCADE: removing an entry from a wheel must not erase the fact
+-- that it was drawn in the past. wheel_id is ON DELETE CASCADE: history has no meaning once the
+-- wheel itself is gone.
+CREATE TABLE IF NOT EXISTS agilite.wheel_draw (
+    id          UUID         NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
+    wheel_id    UUID         NOT NULL REFERENCES agilite.wheel(id) ON DELETE CASCADE,
+    entry_id    UUID         REFERENCES agilite.wheel_entry(id) ON DELETE SET NULL,
+    entry_label VARCHAR(150) NOT NULL,
+    drawn_at    TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_wheel_draw_wheel_id_drawn_at ON agilite.wheel_draw(wheel_id, drawn_at DESC);

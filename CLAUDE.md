@@ -109,8 +109,8 @@ de migrations incrémentales à maintenir tant que rien n'est en prod. Ne pas cr
 fichier de migration numéroté sans feu vert explicite du mainteneur (déclenché au démarrage de
 la BETA). `V1__schema_init.sql` contient désormais, en plus du schéma : `agilite.retro_sessions`/
 `retro_cards` (US20.1.1), `agilite.poker_rooms` (US09.1.1), `agilite.wheel`/`wheel_entry`
-(US14.1.1), et `agilite.retro_formats`/`retro_format_columns` + `retro_sessions.custom_format_id`
-(US20.2.1).
+(US14.1.1), `agilite.retro_formats`/`retro_format_columns` + `retro_sessions.custom_format_id`
+(US20.2.1), et `agilite.wheel_draw` (US14.2.1).
 
 Frontend Angular → **pivot-agilite-ui**. Documentation → **pivot-docs**. Auth/tenant/modules
 partagés → **pivot-core**.
