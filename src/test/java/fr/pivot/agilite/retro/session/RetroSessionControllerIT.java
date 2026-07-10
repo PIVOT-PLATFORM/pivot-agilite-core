@@ -1,5 +1,8 @@
 package fr.pivot.agilite.retro.session;
 
+import fr.pivot.agilite.retro.format.RetroCustomFormat;
+import fr.pivot.agilite.retro.format.RetroCustomFormatRepository;
+import fr.pivot.agilite.retro.format.RetroFormatColumn;
 import fr.pivot.agilite.testsupport.PlatformAuthTestSupport;
 import fr.pivot.agilite.testsupport.PlatformAuthTestSupport.AuthFixture;
 import org.junit.jupiter.api.BeforeEach;
@@ -77,6 +80,9 @@ class RetroSessionControllerIT {
 
     @Autowired
     private RetroSessionRepository sessionRepository;
+
+    @Autowired
+    private RetroCustomFormatRepository customFormatRepository;
 
     private MockMvc mockMvc;
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -161,7 +167,7 @@ class RetroSessionControllerIT {
                                 .header("Authorization", "Bearer " + memberToken)
                                 .contentType(MediaType.APPLICATION_JSON)
                                 .content("""
-                                        {"title":"Retro","format":"CUSTOM","teamId":%d}
+                                        {"title":"Retro","format":"KIF_KAF","teamId":%d}
                                         """.formatted(teamId)))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.contributionTimerSeconds").doesNotExist())
@@ -302,6 +308,127 @@ class RetroSessionControllerIT {
                                         {"title":"Retro","format":"START_STOP_CONTINUE","teamId":%d}
                                         """.formatted(teamId)))
                 .andExpect(status().isUnauthorized());
+    }
+
+    // -------------------------------------------------------------------------
+    // POST /retro/sessions — US20.2.1 customFormatId coordination
+    // -------------------------------------------------------------------------
+
+    /**
+     * Given a caller's own custom format id, when POST /retro/sessions is called with {@code
+     * format = "CUSTOM"}, then it returns 201 and echoes the same {@code customFormatId} back.
+     */
+    @Test
+    void create_customFormatWithOwnCustomFormatId_returns201WithCustomFormatIdEchoed() throws Exception {
+        UUID customFormatId = seedCustomFormat(tenantId);
+
+        mockMvc.perform(
+                        post(SESSIONS_PATH)
+                                .header("Authorization", "Bearer " + memberToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {"title":"Retro","format":"CUSTOM","teamId":%d,"customFormatId":"%s"}
+                                        """.formatted(teamId, customFormatId)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.format").value("CUSTOM"))
+                .andExpect(jsonPath("$.customFormatId").value(customFormatId.toString()));
+    }
+
+    /**
+     * Given {@code format = "CUSTOM"} and no {@code customFormatId}, when POST /retro/sessions
+     * is called, then it returns 400 with code {@code CUSTOM_FORMAT_ID_REQUIRED}.
+     */
+    @Test
+    void create_customFormatWithoutCustomFormatId_returns400() throws Exception {
+        mockMvc.perform(
+                        post(SESSIONS_PATH)
+                                .header("Authorization", "Bearer " + memberToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {"title":"Retro","format":"CUSTOM","teamId":%d}
+                                        """.formatted(teamId)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("CUSTOM_FORMAT_ID_REQUIRED"));
+    }
+
+    /**
+     * Given {@code format = "CUSTOM"} and a {@code customFormatId} belonging to a different
+     * tenant, when POST /retro/sessions is called, then it returns 404 with code {@code
+     * CUSTOM_FORMAT_NOT_FOUND} — never confirms cross-tenant existence via 403.
+     */
+    @Test
+    void create_customFormatWithOtherTenantCustomFormatId_returns404() throws Exception {
+        long otherTenantId = PlatformAuthTestSupport.seedTenant(
+                postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword(), null);
+        UUID otherTenantCustomFormatId = seedCustomFormat(otherTenantId);
+
+        mockMvc.perform(
+                        post(SESSIONS_PATH)
+                                .header("Authorization", "Bearer " + memberToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {"title":"Retro","format":"CUSTOM","teamId":%d,"customFormatId":"%s"}
+                                        """.formatted(teamId, otherTenantCustomFormatId)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("CUSTOM_FORMAT_NOT_FOUND"));
+    }
+
+    /**
+     * Given an unknown {@code customFormatId} (no such row at all), when POST /retro/sessions is
+     * called with {@code format = "CUSTOM"}, then it returns 404 with code {@code
+     * CUSTOM_FORMAT_NOT_FOUND}.
+     */
+    @Test
+    void create_customFormatWithUnknownCustomFormatId_returns404() throws Exception {
+        mockMvc.perform(
+                        post(SESSIONS_PATH)
+                                .header("Authorization", "Bearer " + memberToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {"title":"Retro","format":"CUSTOM","teamId":%d,
+                                         "customFormatId":"%s"}
+                                        """.formatted(teamId, UUID.randomUUID())))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("CUSTOM_FORMAT_NOT_FOUND"));
+    }
+
+    /**
+     * Given a non-{@code CUSTOM} format and a non-null {@code customFormatId}, when POST
+     * /retro/sessions is called, then it returns 400 with code {@code
+     * CUSTOM_FORMAT_ID_NOT_ALLOWED} — rejected explicitly, never silently ignored.
+     */
+    @Test
+    void create_nonCustomFormatWithCustomFormatId_returns400() throws Exception {
+        UUID customFormatId = seedCustomFormat(tenantId);
+
+        mockMvc.perform(
+                        post(SESSIONS_PATH)
+                                .header("Authorization", "Bearer " + memberToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {"title":"Retro","format":"START_STOP_CONTINUE","teamId":%d,
+                                         "customFormatId":"%s"}
+                                        """.formatted(teamId, customFormatId)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("CUSTOM_FORMAT_ID_NOT_ALLOWED"));
+    }
+
+    /**
+     * Given a non-{@code CUSTOM} format and no {@code customFormatId}, when POST
+     * /retro/sessions is called, then it returns 201 with {@code customFormatId} null — the
+     * unchanged, pre-US20.2.1 default behavior.
+     */
+    @Test
+    void create_nonCustomFormatWithoutCustomFormatId_returns201WithNullCustomFormatId() throws Exception {
+        mockMvc.perform(
+                        post(SESSIONS_PATH)
+                                .header("Authorization", "Bearer " + memberToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {"title":"Retro","format":"START_STOP_CONTINUE","teamId":%d}
+                                        """.formatted(teamId)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.customFormatId").doesNotExist());
     }
 
     // -------------------------------------------------------------------------
@@ -502,5 +629,18 @@ class RetroSessionControllerIT {
             ps.setString(1, sessionId.toString());
             ps.executeUpdate();
         }
+    }
+
+    /**
+     * Persists a minimal 2-column custom format for the given tenant directly via the
+     * repository (US20.2.1), returning its id for use as a {@code customFormatId}.
+     */
+    private UUID seedCustomFormat(final long ownerTenantId) {
+        RetroCustomFormat format = new RetroCustomFormat(
+                ownerTenantId, "Custom Format", memberId,
+                java.util.List.of(
+                        new RetroFormatColumn("A", "A", "#2E7D32", null, null),
+                        new RetroFormatColumn("B", "B", "#C62828", null, null)));
+        return customFormatRepository.save(format).getId();
     }
 }

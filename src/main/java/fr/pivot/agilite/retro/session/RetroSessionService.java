@@ -1,11 +1,15 @@
 package fr.pivot.agilite.retro.session;
 
 import fr.pivot.agilite.exception.InvalidRetroFormatException;
+import fr.pivot.agilite.exception.RetroCustomFormatIdNotAllowedException;
+import fr.pivot.agilite.exception.RetroCustomFormatIdRequiredException;
+import fr.pivot.agilite.exception.RetroCustomFormatNotFoundException;
 import fr.pivot.agilite.exception.RetroJoinCodeNotFoundException;
 import fr.pivot.agilite.exception.RetroSessionExpiredException;
 import fr.pivot.agilite.exception.RetroSessionNotFoundException;
 import fr.pivot.agilite.exception.RetroTeamAccessDeniedException;
 import fr.pivot.agilite.exception.RetroTeamNotFoundException;
+import fr.pivot.agilite.retro.format.RetroCustomFormatRepository;
 import fr.pivot.agilite.retro.session.dto.CreateRetroSessionRequest;
 import fr.pivot.agilite.retro.session.dto.RetroSessionJoinResponse;
 import fr.pivot.agilite.retro.session.dto.RetroSessionResponse;
@@ -39,24 +43,29 @@ public class RetroSessionService {
     private final TeamRepository teamRepository;
     private final TeamMemberRepository teamMemberRepository;
     private final JoinCodeGenerator joinCodeGenerator;
+    private final RetroCustomFormatRepository customFormatRepository;
 
     /**
      * Constructs the service with its required dependencies.
      *
-     * @param sessionRepository    retro session persistence
-     * @param teamRepository       {@code pivot-core-starter}'s team persistence
-     * @param teamMemberRepository {@code pivot-core-starter}'s team membership persistence
-     * @param joinCodeGenerator    unique join code generator
+     * @param sessionRepository      retro session persistence
+     * @param teamRepository         {@code pivot-core-starter}'s team persistence
+     * @param teamMemberRepository   {@code pivot-core-starter}'s team membership persistence
+     * @param joinCodeGenerator      unique join code generator
+     * @param customFormatRepository tenant-owned custom format persistence (US20.2.1), used to
+     *                               resolve {@code customFormatId} on creation
      */
     public RetroSessionService(
             final RetroSessionRepository sessionRepository,
             final TeamRepository teamRepository,
             final TeamMemberRepository teamMemberRepository,
-            final JoinCodeGenerator joinCodeGenerator) {
+            final JoinCodeGenerator joinCodeGenerator,
+            final RetroCustomFormatRepository customFormatRepository) {
         this.sessionRepository = sessionRepository;
         this.teamRepository = teamRepository;
         this.teamMemberRepository = teamMemberRepository;
         this.joinCodeGenerator = joinCodeGenerator;
+        this.customFormatRepository = customFormatRepository;
     }
 
     /**
@@ -67,13 +76,23 @@ public class RetroSessionService {
      * @param tenantId the authenticated caller's {@code public.tenants.id}, extracted exclusively
      *                 from the resolved bearer token — never from the request body
      * @return the created session, fully detailed
-     * @throws RetroTeamNotFoundException      if {@code teamId} does not exist, or belongs to a
-     *                                          different tenant (never disclosed which, both
-     *                                          collapse to 404)
-     * @throws RetroTeamAccessDeniedException  if the team exists in the caller's tenant but the
-     *                                          caller is not one of its members
-     * @throws InvalidRetroFormatException     if {@code format} does not match any {@link
-     *                                          RetroFormat} constant
+     * @throws RetroTeamNotFoundException           if {@code teamId} does not exist, or belongs
+     *                                               to a different tenant (never disclosed
+     *                                               which, both collapse to 404)
+     * @throws RetroTeamAccessDeniedException       if the team exists in the caller's tenant but
+     *                                               the caller is not one of its members
+     * @throws InvalidRetroFormatException          if {@code format} does not match any {@link
+     *                                               RetroFormat} constant
+     * @throws RetroCustomFormatIdRequiredException if {@code format} is {@code CUSTOM} and no
+     *                                               {@code customFormatId} was supplied
+     *                                               (US20.2.1)
+     * @throws RetroCustomFormatNotFoundException   if {@code format} is {@code CUSTOM} and {@code
+     *                                               customFormatId} does not resolve to a custom
+     *                                               format owned by the caller's tenant
+     *                                               (US20.2.1, never 403)
+     * @throws RetroCustomFormatIdNotAllowedException if {@code format} is not {@code CUSTOM} but
+     *                                               a {@code customFormatId} was supplied anyway
+     *                                               (US20.2.1)
      */
     @Transactional
     public RetroSessionResponse create(
@@ -86,6 +105,7 @@ public class RetroSessionService {
                 .orElseThrow(() -> new RetroTeamAccessDeniedException(team.getId()));
 
         RetroFormat format = parseFormat(request.format());
+        validateCustomFormatId(format, request.customFormatId(), tenantId);
         String joinCode = joinCodeGenerator.generate();
         Instant now = Instant.now();
         Instant expiresAt = now.plus(SESSION_TTL);
@@ -98,6 +118,7 @@ public class RetroSessionService {
                 team.getId(),
                 request.title(),
                 format,
+                request.customFormatId(),
                 request.sprintRef(),
                 callerId,
                 joinCode,
@@ -168,6 +189,34 @@ public class RetroSessionService {
             return RetroFormat.valueOf(rawFormat);
         } catch (IllegalArgumentException ex) {
             throw new InvalidRetroFormatException(rawFormat);
+        }
+    }
+
+    /**
+     * Validates the cross-field {@code format}/{@code customFormatId} rule (US20.2.1): required
+     * and tenant-resolved when {@code format == CUSTOM}, forbidden otherwise.
+     *
+     * @param format         the already-parsed format
+     * @param customFormatId the raw {@code customFormatId} from the request, may be {@code null}
+     * @param tenantId       the caller's tenant id, used to scope the custom-format lookup
+     * @throws RetroCustomFormatIdRequiredException   if {@code format == CUSTOM} and {@code
+     *                                                 customFormatId} is {@code null}
+     * @throws RetroCustomFormatNotFoundException     if {@code format == CUSTOM} and {@code
+     *                                                 customFormatId} does not resolve to a
+     *                                                 custom format owned by {@code tenantId}
+     * @throws RetroCustomFormatIdNotAllowedException if {@code format != CUSTOM} and {@code
+     *                                                 customFormatId} is not {@code null}
+     */
+    private void validateCustomFormatId(
+            final RetroFormat format, final UUID customFormatId, final Long tenantId) {
+        if (format == RetroFormat.CUSTOM) {
+            if (customFormatId == null) {
+                throw new RetroCustomFormatIdRequiredException();
+            }
+            customFormatRepository.findByIdAndTenantId(customFormatId, tenantId)
+                    .orElseThrow(() -> new RetroCustomFormatNotFoundException(customFormatId));
+        } else if (customFormatId != null) {
+            throw new RetroCustomFormatIdNotAllowedException();
         }
     }
 }

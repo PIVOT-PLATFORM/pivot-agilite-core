@@ -18,9 +18,12 @@ import java.util.Map;
  * RetroTeamAccessDeniedException}, {@link RetroSessionNotFoundException}, {@link
  * RetroJoinCodeNotFoundException}, {@link RetroSessionExpiredException}, {@link
  * InvalidRetroFormatException}), retro-session phase/facilitator exceptions (US20.1.2a, {@link
- * RetroFacilitatorOnlyException}, {@link RetroInvalidPhaseTransitionException}), planning poker
- * room lookup failures (US09.1.1, {@link RoomNotFoundException}) and join-by-code failures
- * (US09.1.2, {@link InviteCodeNotFoundException}), wheel/team domain exceptions (US14.1.1, {@link
+ * RetroFacilitatorOnlyException}, {@link RetroInvalidPhaseTransitionException}), the US20.2.1
+ * custom-format cross-field validation exceptions on session creation ({@link
+ * RetroCustomFormatIdRequiredException}, {@link RetroCustomFormatNotFoundException}, {@link
+ * RetroCustomFormatIdNotAllowedException}), planning poker room lookup failures (US09.1.1, {@link
+ * RoomNotFoundException}) and join-by-code failures (US09.1.2, {@link
+ * InviteCodeNotFoundException}), wheel/team domain exceptions (US14.1.1, {@link
  * WheelNotFoundException}, {@link TeamNotFoundException}, {@link WheelValidationException}), as
  * well as Spring MVC/Bean Validation failures ({@link MethodArgumentNotValidException}, {@link
  * ConstraintViolationException}).
@@ -177,6 +180,54 @@ public class GlobalExceptionHandler {
         ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.BAD_REQUEST);
         problem.setTitle("Invalid retro format");
         problem.setProperties(Map.of("code", "INVALID_FORMAT"));
+        return problem;
+    }
+
+    /**
+     * Returns HTTP 400 with a machine-readable {@code code} property when {@code format ==
+     * "CUSTOM"} but no {@code customFormatId} was supplied on retro session creation (US20.2.1).
+     *
+     * @param ex the thrown exception
+     * @return a 400 problem detail with {@code { "code": "CUSTOM_FORMAT_ID_REQUIRED" } }
+     */
+    @ExceptionHandler(RetroCustomFormatIdRequiredException.class)
+    public ProblemDetail handleRetroCustomFormatIdRequired(final RetroCustomFormatIdRequiredException ex) {
+        ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.BAD_REQUEST);
+        problem.setTitle("Custom format id required");
+        problem.setProperties(Map.of("code", "CUSTOM_FORMAT_ID_REQUIRED"));
+        return problem;
+    }
+
+    /**
+     * Returns HTTP 404 with a machine-readable {@code code} property when a {@code
+     * customFormatId} supplied on retro session creation does not resolve to a custom format
+     * owned by the caller's tenant (US20.2.1) — never 403, to avoid confirming cross-tenant
+     * existence.
+     *
+     * @param ex the thrown exception
+     * @return a 404 problem detail with {@code { "code": "CUSTOM_FORMAT_NOT_FOUND" } }
+     */
+    @ExceptionHandler(RetroCustomFormatNotFoundException.class)
+    public ProblemDetail handleRetroCustomFormatNotFound(final RetroCustomFormatNotFoundException ex) {
+        ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.NOT_FOUND);
+        problem.setTitle("Custom format not found");
+        problem.setProperties(Map.of("code", "CUSTOM_FORMAT_NOT_FOUND"));
+        return problem;
+    }
+
+    /**
+     * Returns HTTP 400 with a machine-readable {@code code} property when a non-{@code CUSTOM}
+     * retro session creation request supplies a {@code customFormatId} anyway (US20.2.1) —
+     * rejected explicitly rather than silently ignored.
+     *
+     * @param ex the thrown exception
+     * @return a 400 problem detail with {@code { "code": "CUSTOM_FORMAT_ID_NOT_ALLOWED" } }
+     */
+    @ExceptionHandler(RetroCustomFormatIdNotAllowedException.class)
+    public ProblemDetail handleRetroCustomFormatIdNotAllowed(final RetroCustomFormatIdNotAllowedException ex) {
+        ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.BAD_REQUEST);
+        problem.setTitle("Custom format id not allowed");
+        problem.setProperties(Map.of("code", "CUSTOM_FORMAT_ID_NOT_ALLOWED"));
         return problem;
     }
 

@@ -246,7 +246,7 @@ class RetroPhaseServiceTest {
 
     private static RetroSession session(final RetroPhase phase) {
         RetroSession session = new RetroSession(
-                TENANT_ID, 1L, "Sprint Retro", RetroFormat.START_STOP_CONTINUE, null,
+                TENANT_ID, 1L, "Sprint Retro", RetroFormat.START_STOP_CONTINUE, null, null,
                 FACILITATOR_ID, "ABC123", null, null, null, 3,
                 Instant.parse("2026-07-10T18:00:00Z"), Instant.parse("2026-07-10T10:00:00Z"));
         session.setCurrentPhase(phase);

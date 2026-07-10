@@ -1,11 +1,17 @@
 package fr.pivot.agilite.retro.session;
 
 import fr.pivot.agilite.exception.InvalidRetroFormatException;
+import fr.pivot.agilite.exception.RetroCustomFormatIdNotAllowedException;
+import fr.pivot.agilite.exception.RetroCustomFormatIdRequiredException;
+import fr.pivot.agilite.exception.RetroCustomFormatNotFoundException;
 import fr.pivot.agilite.exception.RetroJoinCodeNotFoundException;
 import fr.pivot.agilite.exception.RetroSessionExpiredException;
 import fr.pivot.agilite.exception.RetroSessionNotFoundException;
 import fr.pivot.agilite.exception.RetroTeamAccessDeniedException;
 import fr.pivot.agilite.exception.RetroTeamNotFoundException;
+import fr.pivot.agilite.retro.format.RetroCustomFormat;
+import fr.pivot.agilite.retro.format.RetroCustomFormatRepository;
+import fr.pivot.agilite.retro.format.RetroFormatColumn;
 import fr.pivot.agilite.retro.session.dto.CreateRetroSessionRequest;
 import fr.pivot.agilite.retro.session.dto.RetroSessionJoinResponse;
 import fr.pivot.agilite.retro.session.dto.RetroSessionResponse;
@@ -20,6 +26,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -51,6 +58,9 @@ class RetroSessionServiceTest {
     @Mock
     private JoinCodeGenerator joinCodeGenerator;
 
+    @Mock
+    private RetroCustomFormatRepository customFormatRepository;
+
     private RetroSessionService service;
 
     private static final Long CALLER_ID = 1L;
@@ -63,7 +73,8 @@ class RetroSessionServiceTest {
     @BeforeEach
     void setUp() {
         service = new RetroSessionService(
-                sessionRepository, teamRepository, teamMemberRepository, joinCodeGenerator);
+                sessionRepository, teamRepository, teamMemberRepository, joinCodeGenerator,
+                customFormatRepository);
     }
 
     // -------------------------------------------------------------------------
@@ -87,7 +98,7 @@ class RetroSessionServiceTest {
 
         CreateRetroSessionRequest request = new CreateRetroSessionRequest(
                 "Sprint 12 Retro", "START_STOP_CONTINUE", TEAM_ID, "SPRINT-12",
-                null, null, null, null);
+                null, null, null, null, null);
 
         Instant before = Instant.now();
         RetroSessionResponse response = service.create(request, CALLER_ID, TENANT_A);
@@ -120,7 +131,7 @@ class RetroSessionServiceTest {
                 .thenAnswer(inv -> inv.getArgument(0));
 
         CreateRetroSessionRequest request = new CreateRetroSessionRequest(
-                "Retro", "KIF_KAF", TEAM_ID, null, 300, 120, 600, 5);
+                "Retro", "KIF_KAF", TEAM_ID, null, 300, 120, 600, 5, null);
 
         RetroSessionResponse response = service.create(request, CALLER_ID, TENANT_A);
 
@@ -139,7 +150,7 @@ class RetroSessionServiceTest {
         when(teamRepository.findById(TEAM_ID)).thenReturn(Optional.empty());
 
         CreateRetroSessionRequest request = new CreateRetroSessionRequest(
-                "Retro", "START_STOP_CONTINUE", TEAM_ID, null, null, null, null, null);
+                "Retro", "START_STOP_CONTINUE", TEAM_ID, null, null, null, null, null, null);
 
         assertThatThrownBy(() -> service.create(request, CALLER_ID, TENANT_A))
                 .isInstanceOf(RetroTeamNotFoundException.class);
@@ -157,7 +168,7 @@ class RetroSessionServiceTest {
         when(teamRepository.findById(TEAM_ID)).thenReturn(Optional.of(team));
 
         CreateRetroSessionRequest request = new CreateRetroSessionRequest(
-                "Retro", "START_STOP_CONTINUE", TEAM_ID, null, null, null, null, null);
+                "Retro", "START_STOP_CONTINUE", TEAM_ID, null, null, null, null, null, null);
 
         assertThatThrownBy(() -> service.create(request, CALLER_ID, TENANT_A))
                 .isInstanceOf(RetroTeamNotFoundException.class);
@@ -176,7 +187,7 @@ class RetroSessionServiceTest {
                 .thenReturn(Optional.empty());
 
         CreateRetroSessionRequest request = new CreateRetroSessionRequest(
-                "Retro", "START_STOP_CONTINUE", TEAM_ID, null, null, null, null, null);
+                "Retro", "START_STOP_CONTINUE", TEAM_ID, null, null, null, null, null, null);
 
         assertThatThrownBy(() -> service.create(request, CALLER_ID, TENANT_A))
                 .isInstanceOf(RetroTeamAccessDeniedException.class);
@@ -195,11 +206,114 @@ class RetroSessionServiceTest {
                 .thenReturn(Optional.of(new TeamMember(TEAM_ID, CALLER_ID)));
 
         CreateRetroSessionRequest request = new CreateRetroSessionRequest(
-                "Retro", "NOT_A_FORMAT", TEAM_ID, null, null, null, null, null);
+                "Retro", "NOT_A_FORMAT", TEAM_ID, null, null, null, null, null, null);
 
         assertThatThrownBy(() -> service.create(request, CALLER_ID, TENANT_A))
                 .isInstanceOf(InvalidRetroFormatException.class);
         verify(sessionRepository, never()).save(any());
+    }
+
+    // -------------------------------------------------------------------------
+    // create() — US20.2.1 customFormatId cross-field validation
+    // -------------------------------------------------------------------------
+
+    /**
+     * Given {@code format = "CUSTOM"} and a {@code customFormatId} that resolves to a custom
+     * format owned by the caller's tenant, when create() is called, then the session persists
+     * with that {@code customFormatId}.
+     */
+    @Test
+    void create_whenCustomFormatValidForTenant_persistsCustomFormatId() {
+        Team team = teamWithId(TEAM_ID, TENANT_A, "Team A");
+        when(teamRepository.findById(TEAM_ID)).thenReturn(Optional.of(team));
+        when(teamMemberRepository.findByTeamIdAndUserId(TEAM_ID, CALLER_ID))
+                .thenReturn(Optional.of(new TeamMember(TEAM_ID, CALLER_ID)));
+        when(joinCodeGenerator.generate()).thenReturn(JOIN_CODE);
+        when(sessionRepository.save(any(RetroSession.class)))
+                .thenAnswer(inv -> inv.getArgument(0));
+
+        UUID customFormatId = UUID.randomUUID();
+        RetroCustomFormat customFormat = new RetroCustomFormat(
+                TENANT_A, "Custom", CALLER_ID,
+                List.of(
+                        new RetroFormatColumn("A", "A", "#2E7D32", null, null),
+                        new RetroFormatColumn("B", "B", "#C62828", null, null)));
+        when(customFormatRepository.findByIdAndTenantId(customFormatId, TENANT_A))
+                .thenReturn(Optional.of(customFormat));
+
+        CreateRetroSessionRequest request = new CreateRetroSessionRequest(
+                "Retro", "CUSTOM", TEAM_ID, null, null, null, null, null, customFormatId);
+
+        RetroSessionResponse response = service.create(request, CALLER_ID, TENANT_A);
+
+        assertThat(response.format()).isEqualTo(RetroFormat.CUSTOM);
+        assertThat(response.customFormatId()).isEqualTo(customFormatId);
+    }
+
+    /**
+     * Given {@code format = "CUSTOM"} and no {@code customFormatId}, when create() is called,
+     * then it throws {@link RetroCustomFormatIdRequiredException} (400) — never persists.
+     */
+    @Test
+    void create_whenCustomFormatIdMissing_throwsRetroCustomFormatIdRequiredException() {
+        Team team = teamWithId(TEAM_ID, TENANT_A, "Team A");
+        when(teamRepository.findById(TEAM_ID)).thenReturn(Optional.of(team));
+        when(teamMemberRepository.findByTeamIdAndUserId(TEAM_ID, CALLER_ID))
+                .thenReturn(Optional.of(new TeamMember(TEAM_ID, CALLER_ID)));
+
+        CreateRetroSessionRequest request = new CreateRetroSessionRequest(
+                "Retro", "CUSTOM", TEAM_ID, null, null, null, null, null, null);
+
+        assertThatThrownBy(() -> service.create(request, CALLER_ID, TENANT_A))
+                .isInstanceOf(RetroCustomFormatIdRequiredException.class);
+        verify(sessionRepository, never()).save(any());
+    }
+
+    /**
+     * Given {@code format = "CUSTOM"} and a {@code customFormatId} that does not resolve for the
+     * caller's tenant (unknown, or belonging to a different tenant — both collapse to the same
+     * outcome), when create() is called, then it throws {@link
+     * RetroCustomFormatNotFoundException} (404) — never 403.
+     */
+    @Test
+    void create_whenCustomFormatIdNotOwnedByTenant_throwsRetroCustomFormatNotFoundException() {
+        Team team = teamWithId(TEAM_ID, TENANT_A, "Team A");
+        when(teamRepository.findById(TEAM_ID)).thenReturn(Optional.of(team));
+        when(teamMemberRepository.findByTeamIdAndUserId(TEAM_ID, CALLER_ID))
+                .thenReturn(Optional.of(new TeamMember(TEAM_ID, CALLER_ID)));
+
+        UUID customFormatId = UUID.randomUUID();
+        when(customFormatRepository.findByIdAndTenantId(customFormatId, TENANT_A))
+                .thenReturn(Optional.empty());
+
+        CreateRetroSessionRequest request = new CreateRetroSessionRequest(
+                "Retro", "CUSTOM", TEAM_ID, null, null, null, null, null, customFormatId);
+
+        assertThatThrownBy(() -> service.create(request, CALLER_ID, TENANT_A))
+                .isInstanceOf(RetroCustomFormatNotFoundException.class);
+        verify(sessionRepository, never()).save(any());
+    }
+
+    /**
+     * Given a non-{@code CUSTOM} format and a non-null {@code customFormatId}, when create() is
+     * called, then it throws {@link RetroCustomFormatIdNotAllowedException} (400) — rejected
+     * explicitly rather than silently ignored.
+     */
+    @Test
+    void create_whenNonCustomFormatWithCustomFormatId_throwsRetroCustomFormatIdNotAllowedException() {
+        Team team = teamWithId(TEAM_ID, TENANT_A, "Team A");
+        when(teamRepository.findById(TEAM_ID)).thenReturn(Optional.of(team));
+        when(teamMemberRepository.findByTeamIdAndUserId(TEAM_ID, CALLER_ID))
+                .thenReturn(Optional.of(new TeamMember(TEAM_ID, CALLER_ID)));
+
+        CreateRetroSessionRequest request = new CreateRetroSessionRequest(
+                "Retro", "START_STOP_CONTINUE", TEAM_ID, null, null, null, null, null,
+                UUID.randomUUID());
+
+        assertThatThrownBy(() -> service.create(request, CALLER_ID, TENANT_A))
+                .isInstanceOf(RetroCustomFormatIdNotAllowedException.class);
+        verify(sessionRepository, never()).save(any());
+        verify(customFormatRepository, never()).findByIdAndTenantId(any(), any());
     }
 
     // -------------------------------------------------------------------------
@@ -286,7 +400,7 @@ class RetroSessionServiceTest {
     @Test
     void findByJoinCode_whenExpired_throwsRetroSessionExpiredException() {
         RetroSession session = new RetroSession(
-                TENANT_A, TEAM_ID, "Retro", RetroFormat.START_STOP_CONTINUE, null,
+                TENANT_A, TEAM_ID, "Retro", RetroFormat.START_STOP_CONTINUE, null, null,
                 CALLER_ID, JOIN_CODE, null, null, null, 3,
                 Instant.now().minusSeconds(10), Instant.now().minusSeconds(3600));
         when(sessionRepository.findByJoinCode(JOIN_CODE)).thenReturn(Optional.of(session));
@@ -321,7 +435,7 @@ class RetroSessionServiceTest {
      */
     private RetroSession newSession(final Long tenantId, final Long teamId, final RetroPhase phase) {
         RetroSession session = new RetroSession(
-                tenantId, teamId, "Retro", RetroFormat.START_STOP_CONTINUE, null,
+                tenantId, teamId, "Retro", RetroFormat.START_STOP_CONTINUE, null, null,
                 CALLER_ID, JOIN_CODE, null, null, null, 3,
                 Instant.now().plusSeconds(3600), Instant.now());
         session.setCurrentPhase(phase);

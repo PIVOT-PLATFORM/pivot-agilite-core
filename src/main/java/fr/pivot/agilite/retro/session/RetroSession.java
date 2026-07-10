@@ -48,6 +48,16 @@ public class RetroSession {
     @Column(name = "format", nullable = false, length = 30)
     private RetroFormat format;
 
+    /**
+     * Tenant-owned custom format reference (US20.2.1); populated iff {@link #format} is {@link
+     * RetroFormat#CUSTOM}, {@code null} otherwise — enforced both by {@code
+     * RetroSessionService}'s cross-field validation (for the 400/404 error codes) and, as a
+     * structural guarantee, by the {@code chk_retro_sessions_custom_format_id} {@code CHECK}
+     * constraint in {@code V1__schema_init.sql}.
+     */
+    @Column(name = "custom_format_id")
+    private UUID customFormatId;
+
     /** Optional free-text reference to the sprint being retrospected. */
     @Column(name = "sprint_ref", length = 100)
     private String sprintRef;
@@ -104,6 +114,8 @@ public class RetroSession {
      * @param teamId                   owning team's {@code public.teams.id}
      * @param title                    session title (max 100 chars)
      * @param format                   retrospective format reference
+     * @param customFormatId           tenant-owned custom format id, non-{@code null} iff {@code
+     *                                 format} is {@link RetroFormat#CUSTOM}
      * @param sprintRef                optional free-text sprint reference, may be {@code null}
      * @param facilitatorUserId        creating user's {@code public.users.id}
      * @param joinCode                 globally unique 6-character alphanumeric join code
@@ -119,6 +131,7 @@ public class RetroSession {
             final Long teamId,
             final String title,
             final RetroFormat format,
+            final UUID customFormatId,
             final String sprintRef,
             final Long facilitatorUserId,
             final String joinCode,
@@ -132,6 +145,7 @@ public class RetroSession {
         this.teamId = teamId;
         this.title = title;
         this.format = format;
+        this.customFormatId = customFormatId;
         this.sprintRef = sprintRef;
         this.facilitatorUserId = facilitatorUserId;
         this.joinCode = joinCode;
@@ -211,6 +225,16 @@ public class RetroSession {
      */
     public RetroFormat getFormat() {
         return format;
+    }
+
+    /**
+     * Returns the tenant-owned custom format reference.
+     *
+     * @return the custom format's {@code agilite.retro_formats.id}, or {@code null} if {@link
+     *     #format} is not {@link RetroFormat#CUSTOM}
+     */
+    public UUID getCustomFormatId() {
+        return customFormatId;
     }
 
     /**
