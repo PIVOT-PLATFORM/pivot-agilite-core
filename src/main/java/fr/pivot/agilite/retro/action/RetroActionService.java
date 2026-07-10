@@ -27,12 +27,15 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.Comparator;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 /**
- * Business logic for creating, updating, and listing retrospective actions (US20.3.1).
+ * Business logic for creating, updating, and listing retrospective actions (US20.3.1), plus
+ * listing a team's pending actions carried over from any prior session (US20.3.2).
  *
  * <p>Actions are created by any member of the session's team (not just the facilitator) while the
  * session is in {@link RetroPhase#ACTION}. Team existence/tenant-ownership/caller-membership is
@@ -53,6 +56,22 @@ import java.util.UUID;
 public class RetroActionService {
 
     private static final Logger LOG = LoggerFactory.getLogger(RetroActionService.class);
+
+    /**
+     * Statuses considered "pending" for US20.3.2's start-of-retro review — deliberately excludes
+     * {@link RetroActionStatus#TERMINEE}/{@link RetroActionStatus#ABANDONNEE}.
+     */
+    private static final Set<RetroActionStatus> PENDING_STATUSES =
+            EnumSet.of(RetroActionStatus.A_FAIRE, RetroActionStatus.EN_COURS);
+
+    /**
+     * Ascending due-date comparator, due-date-less actions sorted last — shared by {@code
+     * sort=dueDate} on {@link #listForTeam} (US20.3.1) and {@link #listPendingForTeam}
+     * (US20.3.2), which both sort exactly this way.
+     */
+    private static final Comparator<RetroAction> DUE_DATE_COMPARATOR = Comparator.comparing(
+                    RetroAction::getDueDate, Comparator.nullsLast(Comparator.naturalOrder()))
+            .thenComparing(RetroAction::getCreatedAt);
 
     private final RetroActionRepository actionRepository;
     private final RetroSessionRepository sessionRepository;
@@ -198,6 +217,38 @@ public class RetroActionService {
     }
 
     /**
+     * Lists a team's still-open actions (status {@link RetroActionStatus#A_FAIRE} or {@link
+     * RetroActionStatus#EN_COURS}) carried over from any prior session — including sessions
+     * already {@link RetroPhase#CLOSED} — sorted by ascending due date, actions without a due
+     * date last (US20.3.2: "revoir les actions de la rétro précédente au démarrage").
+     *
+     * <p>Reuses the same team-membership gate and {@link #DUE_DATE_COMPARATOR} as {@link
+     * #listForTeam}'s {@code sort=dueDate} branch, just pre-filtered to the two open statuses
+     * instead of taking an arbitrary status filter.
+     *
+     * @param teamId   the team's {@code public.teams.id}, from the path
+     * @param callerId the authenticated caller's {@code public.users.id} — must be a member of
+     *                 {@code teamId}
+     * @param tenantId the authenticated caller's {@code public.tenants.id}, extracted exclusively
+     *                 from the resolved bearer token — never from the request body
+     * @return the team's pending actions, sorted by ascending due date (nulls last); an empty
+     *         list if none, never a 404 for that case
+     * @throws TeamNotFoundException if the team does not exist, belongs to a different tenant, or
+     *                                the caller is not one of its members (never 403)
+     */
+    @Transactional(readOnly = true)
+    public List<RetroActionResponse> listPendingForTeam(
+            final Long teamId, final Long callerId, final Long tenantId) {
+        requireTeamMember(teamId, callerId, tenantId);
+        List<RetroAction> actions = actionRepository.findByTeamIdOrderByCreatedAtAsc(teamId);
+        return actions.stream()
+                .filter(action -> PENDING_STATUSES.contains(action.getStatus()))
+                .sorted(DUE_DATE_COMPARATOR)
+                .map(RetroActionResponse::from)
+                .toList();
+    }
+
+    /**
      * Resolves a session, scoped to the caller's tenant, then verifies the caller is a member of
      * its team.
      *
@@ -318,9 +369,7 @@ public class RetroActionService {
                     .thenComparing(RetroAction::getCreatedAt));
         }
         if ("dueDate".equalsIgnoreCase(sort)) {
-            return Optional.of(Comparator.comparing(
-                            RetroAction::getDueDate, Comparator.nullsLast(Comparator.naturalOrder()))
-                    .thenComparing(RetroAction::getCreatedAt));
+            return Optional.of(DUE_DATE_COMPARATOR);
         }
         return Optional.empty();
     }

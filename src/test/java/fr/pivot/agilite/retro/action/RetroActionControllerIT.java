@@ -431,6 +431,83 @@ class RetroActionControllerIT {
     }
 
     // -------------------------------------------------------------------------
+    // GET /retro/teams/{teamId}/retro/pending-actions
+    // -------------------------------------------------------------------------
+
+    @Test
+    void pendingActions_filtersOpenStatusesAcrossSessions_includingClosedSession_sortedByDueDate() throws Exception {
+        String firstSessionId = createSession();
+        advancePhase(firstSessionId, RetroPhase.ACTION);
+        String laterDueDateActionId = createAction(firstSessionId, "Later due date", "2026-09-01");
+        String noDueDateActionId = createAction(firstSessionId, "No due date", null);
+        String abandonedActionId = createAction(firstSessionId, "Abandoned", null);
+        mockMvc.perform(
+                        patch("/retro/actions/" + abandonedActionId)
+                                .header("Authorization", "Bearer " + facilitatorToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {"status":"ABANDONNEE"}
+                                        """))
+                .andExpect(status().isOk());
+        advancePhase(firstSessionId, RetroPhase.CLOSED);
+
+        String secondSessionId = createSession();
+        advancePhase(secondSessionId, RetroPhase.ACTION);
+        String earlierDueDateActionId = createAction(secondSessionId, "Earlier due date", "2026-08-01");
+        String completedActionId = createAction(secondSessionId, "Completed", "2026-07-01");
+        mockMvc.perform(
+                        patch("/retro/actions/" + completedActionId)
+                                .header("Authorization", "Bearer " + facilitatorToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {"status":"TERMINEE"}
+                                        """))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(
+                        get("/retro/teams/" + teamId + "/retro/pending-actions")
+                                .header("Authorization", "Bearer " + memberToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(3))
+                .andExpect(jsonPath("$[0].id").value(earlierDueDateActionId))
+                .andExpect(jsonPath("$[1].id").value(laterDueDateActionId))
+                .andExpect(jsonPath("$[2].id").value(noDueDateActionId))
+                .andExpect(jsonPath("$[?(@.id=='" + abandonedActionId + "')]").isEmpty())
+                .andExpect(jsonPath("$[?(@.id=='" + completedActionId + "')]").isEmpty());
+    }
+
+    @Test
+    void pendingActions_noOpenActions_returns200WithEmptyList() throws Exception {
+        mockMvc.perform(
+                        get("/retro/teams/" + teamId + "/retro/pending-actions")
+                                .header("Authorization", "Bearer " + facilitatorToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(0));
+    }
+
+    @Test
+    void pendingActions_callerNotTeamMember_returns404() throws Exception {
+        mockMvc.perform(
+                        get("/retro/teams/" + teamId + "/retro/pending-actions")
+                                .header("Authorization", "Bearer " + otherTenantToken))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void pendingActions_unknownTeam_returns404() throws Exception {
+        mockMvc.perform(
+                        get("/retro/teams/999999999/retro/pending-actions")
+                                .header("Authorization", "Bearer " + facilitatorToken))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void pendingActions_noAuthHeader_returns401() throws Exception {
+        mockMvc.perform(get("/retro/teams/" + teamId + "/retro/pending-actions"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
 
@@ -460,13 +537,18 @@ class RetroActionControllerIT {
     }
 
     private String createAction(final String sessionId, final String title) throws Exception {
+        return createAction(sessionId, title, null);
+    }
+
+    private String createAction(final String sessionId, final String title, final String dueDate) throws Exception {
+        String body = dueDate == null
+                ? "{\"title\":\"%s\"}".formatted(title)
+                : "{\"title\":\"%s\",\"dueDate\":\"%s\"}".formatted(title, dueDate);
         MvcResult result = mockMvc.perform(
                         post("/retro/sessions/" + sessionId + "/actions")
                                 .header("Authorization", "Bearer " + facilitatorToken)
                                 .contentType(MediaType.APPLICATION_JSON)
-                                .content("""
-                                        {"title":"%s"}
-                                        """.formatted(title)))
+                                .content(body))
                 .andExpect(status().isCreated())
                 .andReturn();
         return objectMapper.readTree(result.getResponse().getContentAsString()).get("id").asText();

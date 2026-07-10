@@ -47,9 +47,10 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * Unit tests for {@link RetroActionService} covering all business branches (US20.3.1): creation
- * gating (team membership, ACTION phase, owner/source-card validation), free status transitions,
- * and team-scoped listing (filter/sort), all with mocked dependencies — no Spring context.
+ * Unit tests for {@link RetroActionService} covering all business branches (US20.3.1/US20.3.2):
+ * creation gating (team membership, ACTION phase, owner/source-card validation), free status
+ * transitions, team-scoped listing (filter/sort), and team-scoped pending-actions listing, all
+ * with mocked dependencies — no Spring context.
  */
 @ExtendWith(MockitoExtension.class)
 class RetroActionServiceTest {
@@ -523,6 +524,114 @@ class RetroActionServiceTest {
         when(teamMemberRepository.findByTeamIdAndUserId(TEAM_ID, NON_MEMBER_ID)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.listForTeam(TEAM_ID, null, null, NON_MEMBER_ID, TENANT_A))
+                .isInstanceOf(TeamNotFoundException.class);
+    }
+
+    // -------------------------------------------------------------------------
+    // listPendingForTeam() — US20.3.2
+    // -------------------------------------------------------------------------
+
+    /**
+     * Given actions in all 4 statuses with differing due dates, when listPendingForTeam() is
+     * called, then only A_FAIRE/EN_COURS actions are returned, sorted by ascending due date with
+     * the due-date-less one last — TERMINEE/ABANDONNEE are excluded entirely.
+     */
+    @Test
+    void listPendingForTeam_filtersToOpenStatusesAndSortsByDueDateNullsLast() {
+        when(teamRepository.findById(TEAM_ID)).thenReturn(Optional.of(teamWithId(TEAM_ID, TENANT_A)));
+        when(teamMemberRepository.findByTeamIdAndUserId(TEAM_ID, MEMBER_ID))
+                .thenReturn(Optional.of(new TeamMember(TEAM_ID, MEMBER_ID)));
+
+        RetroAction noDueDate = actionWithId(UUID.randomUUID(), TENANT_A, TEAM_ID);
+        noDueDate.setStatus(RetroActionStatus.EN_COURS);
+        RetroAction laterDueDate = actionWithDueDate(UUID.randomUUID(), TENANT_A, TEAM_ID, LocalDate.of(2026, 9, 1));
+        RetroAction earlierDueDate = actionWithDueDate(UUID.randomUUID(), TENANT_A, TEAM_ID, LocalDate.of(2026, 8, 1));
+        earlierDueDate.setStatus(RetroActionStatus.EN_COURS);
+        RetroAction completed = actionWithDueDate(UUID.randomUUID(), TENANT_A, TEAM_ID, LocalDate.of(2026, 7, 1));
+        completed.setStatus(RetroActionStatus.TERMINEE);
+        RetroAction abandoned = actionWithId(UUID.randomUUID(), TENANT_A, TEAM_ID);
+        abandoned.setStatus(RetroActionStatus.ABANDONNEE);
+        when(actionRepository.findByTeamIdOrderByCreatedAtAsc(TEAM_ID))
+                .thenReturn(List.of(noDueDate, laterDueDate, earlierDueDate, completed, abandoned));
+
+        List<RetroActionResponse> result = service.listPendingForTeam(TEAM_ID, MEMBER_ID, TENANT_A);
+
+        assertThat(result).extracting(RetroActionResponse::id)
+                .containsExactly(earlierDueDate.getId(), laterDueDate.getId(), noDueDate.getId());
+        assertThat(result).extracting(RetroActionResponse::status)
+                .containsOnly("A_FAIRE", "EN_COURS");
+    }
+
+    /**
+     * Given a team with actions but none in A_FAIRE/EN_COURS, when listPendingForTeam() is
+     * called, then it returns an empty list — never a 404 for that case.
+     */
+    @Test
+    void listPendingForTeam_noOpenActions_returnsEmptyList() {
+        when(teamRepository.findById(TEAM_ID)).thenReturn(Optional.of(teamWithId(TEAM_ID, TENANT_A)));
+        when(teamMemberRepository.findByTeamIdAndUserId(TEAM_ID, MEMBER_ID))
+                .thenReturn(Optional.of(new TeamMember(TEAM_ID, MEMBER_ID)));
+        RetroAction completed = actionWithId(UUID.randomUUID(), TENANT_A, TEAM_ID);
+        completed.setStatus(RetroActionStatus.TERMINEE);
+        when(actionRepository.findByTeamIdOrderByCreatedAtAsc(TEAM_ID)).thenReturn(List.of(completed));
+
+        List<RetroActionResponse> result = service.listPendingForTeam(TEAM_ID, MEMBER_ID, TENANT_A);
+
+        assertThat(result).isEmpty();
+    }
+
+    /**
+     * Given a team with no actions at all, when listPendingForTeam() is called, then it returns
+     * an empty list.
+     */
+    @Test
+    void listPendingForTeam_noActionsAtAll_returnsEmptyList() {
+        when(teamRepository.findById(TEAM_ID)).thenReturn(Optional.of(teamWithId(TEAM_ID, TENANT_A)));
+        when(teamMemberRepository.findByTeamIdAndUserId(TEAM_ID, MEMBER_ID))
+                .thenReturn(Optional.of(new TeamMember(TEAM_ID, MEMBER_ID)));
+        when(actionRepository.findByTeamIdOrderByCreatedAtAsc(TEAM_ID)).thenReturn(List.of());
+
+        List<RetroActionResponse> result = service.listPendingForTeam(TEAM_ID, MEMBER_ID, TENANT_A);
+
+        assertThat(result).isEmpty();
+    }
+
+    /**
+     * Given an unknown team id, when listPendingForTeam() is called, then it throws {@link
+     * TeamNotFoundException} (404).
+     */
+    @Test
+    void listPendingForTeam_unknownTeam_throwsTeamNotFoundException() {
+        when(teamRepository.findById(TEAM_ID)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.listPendingForTeam(TEAM_ID, MEMBER_ID, TENANT_A))
+                .isInstanceOf(TeamNotFoundException.class);
+    }
+
+    /**
+     * Given a team belonging to a different tenant, when listPendingForTeam() is called, then it
+     * throws {@link TeamNotFoundException} (404) — never confirming cross-tenant existence.
+     */
+    @Test
+    void listPendingForTeam_crossTenantTeam_throwsTeamNotFoundException() {
+        when(teamRepository.findById(TEAM_ID)).thenReturn(Optional.of(teamWithId(TEAM_ID, TENANT_B)));
+
+        assertThatThrownBy(() -> service.listPendingForTeam(TEAM_ID, MEMBER_ID, TENANT_A))
+                .isInstanceOf(TeamNotFoundException.class);
+        verify(teamMemberRepository, never()).findByTeamIdAndUserId(any(), any());
+    }
+
+    /**
+     * Given a team that exists in the caller's tenant but the caller is not one of its members,
+     * when listPendingForTeam() is called, then it throws {@link TeamNotFoundException} (404) —
+     * never a 403 (same anti-enumeration posture as US20.3.1).
+     */
+    @Test
+    void listPendingForTeam_callerNotTeamMember_throwsTeamNotFoundException() {
+        when(teamRepository.findById(TEAM_ID)).thenReturn(Optional.of(teamWithId(TEAM_ID, TENANT_A)));
+        when(teamMemberRepository.findByTeamIdAndUserId(TEAM_ID, NON_MEMBER_ID)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.listPendingForTeam(TEAM_ID, NON_MEMBER_ID, TENANT_A))
                 .isInstanceOf(TeamNotFoundException.class);
     }
 
