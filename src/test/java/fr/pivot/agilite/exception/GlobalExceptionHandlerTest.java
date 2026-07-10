@@ -1,5 +1,6 @@
 package fr.pivot.agilite.exception;
 
+import fr.pivot.agilite.poker.exception.InviteCodeNotFoundException;
 import jakarta.validation.ConstraintViolationException;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
@@ -20,6 +21,13 @@ import static org.mockito.Mockito.when;
 class GlobalExceptionHandlerTest {
 
     private final GlobalExceptionHandler handler = new GlobalExceptionHandler();
+
+    @Test
+    void handleInviteCodeNotFound_returns404() {
+        ProblemDetail problem =
+                handler.handleInviteCodeNotFound(new InviteCodeNotFoundException());
+        assertThat(problem.getStatus()).isEqualTo(HttpStatus.NOT_FOUND.value());
+    }
 
     @Test
     void handleRetroTeamNotFound_returns404() {

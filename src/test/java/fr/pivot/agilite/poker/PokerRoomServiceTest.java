@@ -1,7 +1,10 @@
 package fr.pivot.agilite.poker;
 
+import fr.pivot.agilite.poker.dto.JoinRoomResponse;
 import fr.pivot.agilite.poker.dto.RoomResponse;
+import fr.pivot.agilite.poker.exception.InviteCodeNotFoundException;
 import fr.pivot.agilite.poker.exception.RoomNotFoundException;
+import fr.pivot.agilite.poker.ws.RoomAccessGrantService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -9,6 +12,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.Optional;
@@ -21,10 +25,11 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /**
- * Unit tests for {@link PokerRoomService} (US09.1.1).
+ * Unit tests for {@link PokerRoomService} (US09.1.1, US09.1.2).
  */
 @ExtendWith(MockitoExtension.class)
 class PokerRoomServiceTest {
@@ -36,12 +41,15 @@ class PokerRoomServiceTest {
     @Mock
     private PokerRoomRepository repository;
 
+    @Mock
+    private RoomAccessGrantService roomAccessGrantService;
+
     private PokerRoomService service;
 
     @BeforeEach
     void setUp() {
         Clock fixedClock = Clock.fixed(FIXED_NOW, ZoneOffset.UTC);
-        service = new PokerRoomService(repository, fixedClock, 24);
+        service = new PokerRoomService(repository, fixedClock, 24, roomAccessGrantService);
     }
 
     /**
@@ -165,6 +173,126 @@ class PokerRoomServiceTest {
 
         assertThat(service.findById(ROOM_ID, 1L).id()).isEqualTo(ROOM_ID);
         assertThatThrownBy(() -> service.findById(ROOM_ID, 2L)).isInstanceOf(RoomNotFoundException.class);
+    }
+
+    // -------------------------------------------------------------------------
+    // join (US09.1.2)
+    // -------------------------------------------------------------------------
+
+    /**
+     * Given a valid, active, non-expired invite code belonging to the caller's tenant, when
+     * joining, then a fresh access token is minted, {@code RoomAccessGrantService#grantAccess} is
+     * called with the room id, a non-blank token, and a TTL computed from the fixed clock against
+     * the room's {@code expiresAt}, and the response carries no {@code inviteCode}/{@code
+     * facilitatorUserId}.
+     */
+    @Test
+    void join_validActiveCode_mintsTokenAndGrantsAccess() {
+        Instant expiresAt = FIXED_NOW.plusSeconds(3600);
+        PokerRoom room = new PokerRoom(3L, 7L, "Sprint 8", "ABC234", FIXED_NOW, expiresAt);
+        setId(room, ROOM_ID);
+        when(repository.findByInviteCode("ABC234")).thenReturn(Optional.of(room));
+
+        JoinRoomResponse response = service.join("ABC234", 3L);
+
+        assertThat(response.roomId()).isEqualTo(ROOM_ID);
+        assertThat(response.name()).isEqualTo("Sprint 8");
+        assertThat(response.sequence()).isEqualTo(PokerCardDeck.SEQUENCE_FIBONACCI);
+        assertThat(response.cardValues()).isEqualTo(PokerCardDeck.FIBONACCI_VALUES);
+        assertThat(response.active()).isTrue();
+        assertThat(response.expiresAt()).isEqualTo(expiresAt);
+        assertThat(response.wsTopic()).isEqualTo("/topic/agilite/poker/" + ROOM_ID);
+        assertThat(response.accessToken()).isNotBlank();
+
+        Duration expectedTtl = Duration.between(FIXED_NOW, expiresAt);
+        verify(roomAccessGrantService)
+                .grantAccess(eq(ROOM_ID), anyString(), eq(expectedTtl));
+    }
+
+    /**
+     * Error case: given an invite code that matches no room at all, when joining, then {@link
+     * InviteCodeNotFoundException} is thrown and no access grant is ever issued.
+     */
+    @Test
+    void join_unknownCode_throwsInviteCodeNotFoundException() {
+        when(repository.findByInviteCode("ZZZZZZ")).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.join("ZZZZZZ", 3L))
+                .isInstanceOf(InviteCodeNotFoundException.class);
+        verifyNoInteractions(roomAccessGrantService);
+    }
+
+    /**
+     * Security AC (ADR-026 §2): given a code belonging to a room in a different tenant, when
+     * joining, then it throws the exact same {@link InviteCodeNotFoundException} as an unknown
+     * code — never confirming cross-tenant existence — and no access grant is issued.
+     */
+    @Test
+    void join_crossTenantCode_throwsInviteCodeNotFoundException() {
+        PokerRoom room = new PokerRoom(1L, 7L, "Room", "ABC234", FIXED_NOW, FIXED_NOW.plusSeconds(3600));
+        setId(room, ROOM_ID);
+        when(repository.findByInviteCode("ABC234")).thenReturn(Optional.of(room));
+
+        assertThatThrownBy(() -> service.join("ABC234", 2L))
+                .isInstanceOf(InviteCodeNotFoundException.class);
+        verifyNoInteractions(roomAccessGrantService);
+    }
+
+    /**
+     * Security AC (ADR-026 §2): given a deactivated room's code, when joining, then it throws
+     * the same {@link InviteCodeNotFoundException} and no access grant is issued.
+     */
+    @Test
+    void join_inactiveRoomCode_throwsInviteCodeNotFoundException() {
+        PokerRoom room = new PokerRoom(3L, 7L, "Room", "ABC234", FIXED_NOW, FIXED_NOW.plusSeconds(3600));
+        setId(room, ROOM_ID);
+        setActive(room, false);
+        when(repository.findByInviteCode("ABC234")).thenReturn(Optional.of(room));
+
+        assertThatThrownBy(() -> service.join("ABC234", 3L))
+                .isInstanceOf(InviteCodeNotFoundException.class);
+        verifyNoInteractions(roomAccessGrantService);
+    }
+
+    /**
+     * Security AC (ADR-026 §2): given an expired room's code, when joining, then it throws the
+     * same {@link InviteCodeNotFoundException} and no access grant is issued.
+     */
+    @Test
+    void join_expiredRoomCode_throwsInviteCodeNotFoundException() {
+        PokerRoom room = new PokerRoom(3L, 7L, "Room", "ABC234", FIXED_NOW.minusSeconds(7200), FIXED_NOW.minusSeconds(3600));
+        setId(room, ROOM_ID);
+        when(repository.findByInviteCode("ABC234")).thenReturn(Optional.of(room));
+
+        assertThatThrownBy(() -> service.join("ABC234", 3L))
+                .isInstanceOf(InviteCodeNotFoundException.class);
+        verifyNoInteractions(roomAccessGrantService);
+    }
+
+    /**
+     * Boundary case: a room whose {@code expiresAt} equals exactly the current clock instant is
+     * treated as expired ({@code isAfter}, strictly, not {@code isBefore}/{@code equals}) — same
+     * indistinguishable exception.
+     */
+    @Test
+    void join_expiresAtExactlyNow_isTreatedAsExpired() {
+        PokerRoom room = new PokerRoom(3L, 7L, "Room", "ABC234", FIXED_NOW.minusSeconds(3600), FIXED_NOW);
+        setId(room, ROOM_ID);
+        when(repository.findByInviteCode("ABC234")).thenReturn(Optional.of(room));
+
+        assertThatThrownBy(() -> service.join("ABC234", 3L))
+                .isInstanceOf(InviteCodeNotFoundException.class);
+        verifyNoInteractions(roomAccessGrantService);
+    }
+
+    private static void setActive(final PokerRoom room, final boolean active) {
+        try {
+            java.lang.reflect.Field field = PokerRoom.class.getDeclaredField("active");
+            field.setAccessible(true);
+            field.set(room, active);
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     private static void setId(final PokerRoom room, final UUID id) {

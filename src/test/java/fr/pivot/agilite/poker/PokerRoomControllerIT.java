@@ -1,5 +1,6 @@
 package fr.pivot.agilite.poker;
 
+import fr.pivot.agilite.poker.ws.RoomAccessGrantService;
 import fr.pivot.agilite.testsupport.PlatformAuthTestSupport;
 import fr.pivot.agilite.testsupport.PlatformAuthTestSupport.AuthFixture;
 import org.junit.jupiter.api.BeforeEach;
@@ -20,6 +21,8 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
+
+import java.sql.DriverManager;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -74,6 +77,9 @@ class PokerRoomControllerIT {
 
     @Autowired
     private WebApplicationContext wac;
+
+    @Autowired
+    private RoomAccessGrantService roomAccessGrantService;
 
     private MockMvc mockMvc;
 
@@ -355,6 +361,138 @@ class PokerRoomControllerIT {
     }
 
     // -------------------------------------------------------------------------
+    // POST /poker/rooms/join
+    // -------------------------------------------------------------------------
+
+    /**
+     * Given a valid, active, non-expired invite code, when POST /poker/rooms/join is called by a
+     * caller in the same tenant, then it returns HTTP 200 with the joined room's id, a non-blank
+     * accessToken, and a wsTopic following the ADR-026 §2 convention — and the returned
+     * accessToken is immediately usable: {@code RoomAccessGrantService#hasAccess} is true for
+     * this exact (roomId, accessToken) pair right after the call, proving the grant was actually
+     * issued, not just echoed in the response.
+     */
+    @Test
+    void join_validCode_returns200WithAccessTokenAndGrantsAccess() throws Exception {
+        JsonNode createdRoom = createRoomNode(tokenA, "Sprint 8 estimation");
+        String roomId = createdRoom.get("id").asText();
+        String inviteCode = createdRoom.get("inviteCode").asText();
+
+        MvcResult result = mockMvc.perform(post(BASE_PATH + "/join")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header("Authorization", "Bearer " + tokenA)
+                        .content("{\"code\": \"" + inviteCode + "\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.roomId").value(roomId))
+                .andExpect(jsonPath("$.name").value("Sprint 8 estimation"))
+                .andExpect(jsonPath("$.sequence").value("FIBONACCI"))
+                .andExpect(jsonPath("$.cardValues").isArray())
+                .andExpect(jsonPath("$.active").value(true))
+                .andExpect(jsonPath("$.expiresAt").isNotEmpty())
+                .andExpect(jsonPath("$.wsTopic").value("/topic/agilite/poker/" + roomId))
+                .andExpect(jsonPath("$.accessToken").isNotEmpty())
+                .andExpect(jsonPath("$.inviteCode").doesNotExist())
+                .andExpect(jsonPath("$.facilitatorUserId").doesNotExist())
+                .andReturn();
+
+        JsonNode body = objectMapper.readTree(result.getResponse().getContentAsString());
+        String accessToken = body.get("accessToken").asText();
+        assertThat(accessToken).isNotBlank();
+        assertThat(roomAccessGrantService.hasAccess(java.util.UUID.fromString(roomId), accessToken))
+                .isTrue();
+    }
+
+    /**
+     * Error case: given a blank code, when POST /poker/rooms/join is called, then it returns
+     * HTTP 400 with code INVALID_CODE.
+     */
+    @Test
+    void join_blankCode_returns400WithInvalidCodeCode() throws Exception {
+        mockMvc.perform(post(BASE_PATH + "/join")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header("Authorization", "Bearer " + tokenA)
+                        .content("{\"code\": \"\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_CODE"));
+    }
+
+    /**
+     * Error case: given a code that is not exactly 6 characters, when POST /poker/rooms/join is
+     * called, then it returns HTTP 400 with code INVALID_CODE.
+     */
+    @Test
+    void join_wrongLengthCode_returns400WithInvalidCodeCode() throws Exception {
+        mockMvc.perform(post(BASE_PATH + "/join")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header("Authorization", "Bearer " + tokenA)
+                        .content("{\"code\": \"ABCDE\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_CODE"));
+    }
+
+    /**
+     * Error case: given a syntactically valid but unknown 6-character code, when POST
+     * /poker/rooms/join is called, then it returns HTTP 404.
+     */
+    @Test
+    void join_unknownCode_returns404() throws Exception {
+        mockMvc.perform(post(BASE_PATH + "/join")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header("Authorization", "Bearer " + tokenA)
+                        .content("{\"code\": \"ZZZZZZ\"}"))
+                .andExpect(status().isNotFound());
+    }
+
+    /**
+     * Error case: given a code whose room has since expired, when POST /poker/rooms/join is
+     * called, then it returns HTTP 404 — same as an unknown code, per ADR-026 §2.
+     */
+    @Test
+    void join_expiredRoomCode_returns404() throws Exception {
+        JsonNode createdRoom = createRoomNode(tokenA, "Expired room");
+        String inviteCode = createdRoom.get("inviteCode").asText();
+        expireRoomByInviteCode(inviteCode);
+
+        mockMvc.perform(post(BASE_PATH + "/join")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header("Authorization", "Bearer " + tokenA)
+                        .content("{\"code\": \"" + inviteCode + "\"}"))
+                .andExpect(status().isNotFound());
+    }
+
+    /**
+     * Security: given a room created under tenant A, when a caller from tenant B attempts to
+     * join it with A's valid invite code, then it returns HTTP 404 — indistinguishable from an
+     * unknown code, never confirming cross-tenant existence.
+     */
+    @Test
+    void join_crossTenantCode_returns404() throws Exception {
+        JsonNode createdRoom = createRoomNode(tokenA, "Tenant A Room");
+        String inviteCode = createdRoom.get("inviteCode").asText();
+
+        mockMvc.perform(post(BASE_PATH + "/join")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header("Authorization", "Bearer " + tokenB)
+                        .content("{\"code\": \"" + inviteCode + "\"}"))
+                .andExpect(status().isNotFound());
+    }
+
+    /**
+     * Error case: given the Authorization bearer header is absent, when POST /poker/rooms/join
+     * is called, then it returns HTTP 401 Unauthorized.
+     */
+    @Test
+    void join_missingAuthorization_returns401() throws Exception {
+        JsonNode createdRoom = createRoomNode(tokenA, "Room");
+        String inviteCode = createdRoom.get("inviteCode").asText();
+
+        mockMvc.perform(post(BASE_PATH + "/join")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"code\": \"" + inviteCode + "\"}"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    // -------------------------------------------------------------------------
     // Helper
     // -------------------------------------------------------------------------
 
@@ -367,13 +505,44 @@ class PokerRoomControllerIT {
      * @throws Exception if the HTTP request fails or the response status is not 201
      */
     private String createRoomFor(final String token, final String name) throws Exception {
+        return createRoomNode(token, name).get("id").asText();
+    }
+
+    /**
+     * Creates a room via the API using the given caller's bearer token and returns the full
+     * response body, so callers can read both {@code id} and {@code inviteCode}.
+     *
+     * @param token the caller's raw bearer token
+     * @param name  the room name
+     * @return the created room's full JSON response body
+     * @throws Exception if the HTTP request fails or the response status is not 201
+     */
+    private JsonNode createRoomNode(final String token, final String name) throws Exception {
         MvcResult result = mockMvc.perform(post(BASE_PATH)
                         .contentType(MediaType.APPLICATION_JSON)
                         .header("Authorization", "Bearer " + token)
                         .content("{\"name\": \"" + name + "\"}"))
                 .andExpect(status().isCreated())
                 .andReturn();
-        JsonNode body = objectMapper.readTree(result.getResponse().getContentAsString());
-        return body.get("id").asText();
+        return objectMapper.readTree(result.getResponse().getContentAsString());
+    }
+
+    /**
+     * Directly backdates a room's {@code expires_at} via a native update (no setter exists),
+     * identified by its invite code — mirrors {@code RetroSessionControllerIT#expireSession}'s
+     * pattern against the same Testcontainers Postgres instance used by this IT class.
+     *
+     * @param inviteCode the invite code of the room to backdate
+     * @throws Exception if the JDBC update fails
+     */
+    private void expireRoomByInviteCode(final String inviteCode) throws Exception {
+        try (var conn = DriverManager.getConnection(
+                        postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+                var ps = conn.prepareStatement(
+                        "UPDATE agilite.poker_rooms SET expires_at = now() - interval '1 hour' "
+                                + "WHERE invite_code = ?")) {
+            ps.setString(1, inviteCode);
+            ps.executeUpdate();
+        }
     }
 }
