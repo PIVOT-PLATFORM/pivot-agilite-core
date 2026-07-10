@@ -210,6 +210,13 @@ public class RetroVoteService {
             return null;
         }
         RetroSession session = sessionOpt.get();
+        if (session.getCurrentPhase() == RetroPhase.CLOSED) {
+            // US20.1.2c — a closed session is read-only; called out as its own branch (rather
+            // than falling through the generic phase-mismatch message below) so clients get an
+            // unambiguous, stable reason to drive their read-only lockdown UI.
+            notifyError(principal, "Retro session is closed");
+            return null;
+        }
         if (session.getCurrentPhase() != RetroPhase.VOTE) {
             notifyError(principal, "Retro session is not accepting votes right now");
             return null;

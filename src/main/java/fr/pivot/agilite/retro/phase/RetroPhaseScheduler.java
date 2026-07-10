@@ -14,7 +14,9 @@ import java.time.Instant;
 /**
  * Periodically checks every session still in {@link RetroPhase#CONTRIBUTION} for an elapsed
  * configured timer, triggering the automatic transition to {@link RetroPhase#REVUE} (US20.1.2a
- * AC: "when le timer configuré expire, then la phase passe automatiquement à REVUE").
+ * AC: "when le timer configuré expire, then la phase passe automatiquement à REVUE"). Also
+ * covers the equivalent {@code VOTE} → {@code ACTION} (US20.1.2b, {@link #checkVoteTimers()})
+ * and {@code ACTION} → {@code CLOSED} (US20.1.2c, {@link #checkActionTimers()}) timers.
  *
  * <p><strong>No dedicated "phase started at" column needed.</strong> {@code
  * contributionTimerSeconds} is measured from the session's {@code createdAt} — a session is
@@ -106,6 +108,37 @@ public class RetroPhaseScheduler {
             if (!deadline.isAfter(now)) {
                 LOG.debug("Vote timer elapsed for session={}, auto-transitioning to ACTION", session.getId());
                 phaseService.autoTransitionToAction(session.getId());
+            }
+        }
+    }
+
+    /**
+     * Scans every {@code ACTION}-phase session and auto-transitions those whose configured
+     * {@code actionTimerSeconds} has elapsed since the session entered {@code ACTION} (US20.1.2c
+     * AC: "when le timer configuré expire ... then un événement SESSION_CLOSED est diffusé et la
+     * session passe en lecture seule").
+     *
+     * <p>Same {@code updatedAt}-as-phase-start-marker rationale as {@link #checkVoteTimers()}:
+     * entering {@code ACTION} via {@link RetroPhaseService#closeVote}/{@code
+     * autoTransitionToAction} is itself a phase transition, so it naturally stamps {@code
+     * updatedAt} with exactly the timestamp this scheduler needs — no dedicated "phase started
+     * at" column required.
+     *
+     * <p>Sessions with no configured {@code actionTimerSeconds} ({@code null} — manual closure
+     * only) are skipped entirely, never auto-closed.
+     */
+    @Scheduled(fixedDelayString = "${pivot.agilite.retro.phase-scheduler.fixed-delay-ms:2000}")
+    public void checkActionTimers() {
+        Instant now = clock.instant();
+        for (RetroSession session : sessionRepository.findByCurrentPhase(RetroPhase.ACTION)) {
+            Integer timerSeconds = session.getActionTimerSeconds();
+            if (timerSeconds == null) {
+                continue;
+            }
+            Instant deadline = session.getUpdatedAt().plusSeconds(timerSeconds);
+            if (!deadline.isAfter(now)) {
+                LOG.debug("Action timer elapsed for session={}, auto-closing session", session.getId());
+                phaseService.autoTransitionToClose(session.getId());
             }
         }
     }

@@ -179,6 +179,28 @@ class RetroCardServiceTest {
     }
 
     /**
+     * Given a closed session (US20.1.2c), when a card is submitted, then it is rejected with an
+     * unambiguous "closed" message — a distinct branch from the generic phase-mismatch rejection
+     * above, so clients get a stable reason to drive their read-only lockdown UI.
+     */
+    @Test
+    void submit_sessionClosed_rejectsWithClosedMessage() {
+        when(grantService.resolveGrant(SESSION_ID, ACCESS_TOKEN))
+                .thenReturn(Optional.of(new RetroParticipantGrant(42L, 7L, false)));
+        RetroSession session = contributionSession();
+        session.setCurrentPhase(RetroPhase.CLOSED);
+        when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(session));
+
+        service.submit(SESSION_ID, new SubmitCardRequest("Too late", "went-well", false), ACCESS_TOKEN, principal);
+
+        verify(cardRepository, never()).save(any());
+        verify(messagingTemplate, never()).convertAndSend(anyString(), any(Object.class));
+        ArgumentCaptor<WsErrorPayload> captor = ArgumentCaptor.forClass(WsErrorPayload.class);
+        verify(messagingTemplate).convertAndSendToUser(eq("connection-1"), eq("/queue/errors"), captor.capture());
+        assertThat(captor.getValue().error()).isEqualTo("Retro session is closed");
+    }
+
+    /**
      * Given blank card content, when submitted, then it is rejected without persisting or
      * broadcasting, and the sender is notified.
      */

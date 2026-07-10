@@ -7,6 +7,7 @@ import fr.pivot.agilite.retro.card.RetroCard;
 import fr.pivot.agilite.retro.card.RetroCardRepository;
 import fr.pivot.agilite.retro.phase.dto.PhaseChangedEvent;
 import fr.pivot.agilite.retro.phase.dto.RevealResponse;
+import fr.pivot.agilite.retro.phase.dto.SessionClosedEvent;
 import fr.pivot.agilite.retro.session.RetroFormat;
 import fr.pivot.agilite.retro.session.RetroPhase;
 import fr.pivot.agilite.retro.session.RetroSession;
@@ -405,6 +406,105 @@ class RetroPhaseServiceTest {
         when(sessionRepository.findById(session.getId())).thenReturn(Optional.of(session));
 
         service.autoTransitionToAction(session.getId());
+
+        verify(sessionRepository, never()).save(any());
+        verify(messagingTemplate, never()).convertAndSend(anyString(), any(Object.class));
+    }
+
+    // -------------------------------------------------------------------------
+    // closeSession / autoTransitionToClose
+    // -------------------------------------------------------------------------
+
+    /**
+     * Given the facilitator, when they manually close the session on an ACTION-phase session,
+     * then it transitions to CLOSED and SESSION_CLOSED is broadcast.
+     */
+    @Test
+    void closeSession_asFacilitatorInActionPhase_transitionsAndBroadcastsSessionClosed() {
+        RetroSession session = session(RetroPhase.ACTION);
+        when(sessionRepository.findById(session.getId())).thenReturn(Optional.of(session));
+
+        RetroPhase result = service.closeSession(session.getId(), FACILITATOR_ID, TENANT_ID);
+
+        assertThat(result).isEqualTo(RetroPhase.CLOSED);
+        assertThat(session.getCurrentPhase()).isEqualTo(RetroPhase.CLOSED);
+        ArgumentCaptor<Object> captor = ArgumentCaptor.forClass(Object.class);
+        verify(messagingTemplate).convertAndSend(eq(RetroSessionDestinations.roomTopic(session.getId())), captor.capture());
+        SessionClosedEvent event = (SessionClosedEvent) captor.getValue();
+        assertThat(event.type()).isEqualTo(SessionClosedEvent.TYPE);
+        assertThat(event.sessionId()).isEqualTo(session.getId());
+        assertThat(event.previousPhase()).isEqualTo(RetroPhase.ACTION);
+        assertThat(event.closedAt()).isNotNull();
+    }
+
+    /**
+     * Given a caller who is not the facilitator, when they attempt to close the session, then it
+     * is rejected (403-equivalent) and no transition happens.
+     */
+    @Test
+    void closeSession_notFacilitator_throwsAndDoesNotTransition() {
+        RetroSession session = session(RetroPhase.ACTION);
+        when(sessionRepository.findById(session.getId())).thenReturn(Optional.of(session));
+
+        assertThatThrownBy(() -> service.closeSession(session.getId(), OTHER_USER_ID, TENANT_ID))
+                .isInstanceOf(RetroFacilitatorOnlyException.class);
+        assertThat(session.getCurrentPhase()).isEqualTo(RetroPhase.ACTION);
+        verify(messagingTemplate, never()).convertAndSend(anyString(), any(Object.class));
+    }
+
+    /**
+     * Given a session still in VOTE (vote never closed), when the facilitator attempts to close
+     * the session, then it is rejected with a conflict.
+     */
+    @Test
+    void closeSession_stillInVote_throwsInvalidTransition() {
+        RetroSession session = session(RetroPhase.VOTE);
+        when(sessionRepository.findById(session.getId())).thenReturn(Optional.of(session));
+
+        assertThatThrownBy(() -> service.closeSession(session.getId(), FACILITATOR_ID, TENANT_ID))
+                .isInstanceOf(RetroInvalidPhaseTransitionException.class);
+    }
+
+    /**
+     * Given a session belonging to a different tenant, when closing the session is attempted,
+     * then it is rejected as not-found (never confirming cross-tenant existence).
+     */
+    @Test
+    void closeSession_crossTenant_throwsNotFound() {
+        RetroSession session = session(RetroPhase.ACTION);
+        when(sessionRepository.findById(session.getId())).thenReturn(Optional.of(session));
+
+        assertThatThrownBy(() -> service.closeSession(session.getId(), FACILITATOR_ID, 999L))
+                .isInstanceOf(RetroSessionNotFoundException.class);
+    }
+
+    /**
+     * Given a session in ACTION, when the scheduler triggers the auto-transition, then it moves
+     * to CLOSED, broadcasting SESSION_CLOSED — no caller identity needed.
+     */
+    @Test
+    void autoTransitionToClose_actionPhase_transitionsAndBroadcastsSessionClosed() {
+        RetroSession session = session(RetroPhase.ACTION);
+        when(sessionRepository.findById(session.getId())).thenReturn(Optional.of(session));
+
+        service.autoTransitionToClose(session.getId());
+
+        assertThat(session.getCurrentPhase()).isEqualTo(RetroPhase.CLOSED);
+        ArgumentCaptor<Object> captor = ArgumentCaptor.forClass(Object.class);
+        verify(messagingTemplate).convertAndSend(eq(RetroSessionDestinations.roomTopic(session.getId())), captor.capture());
+        assertThat(captor.getValue()).isInstanceOf(SessionClosedEvent.class);
+    }
+
+    /**
+     * Given a session already closed (e.g. manually closed already), when the scheduler's
+     * auto-transition runs, then it is a no-op — no double transition, no duplicate broadcast.
+     */
+    @Test
+    void autoTransitionToClose_alreadyClosed_isNoOp() {
+        RetroSession session = session(RetroPhase.CLOSED);
+        when(sessionRepository.findById(session.getId())).thenReturn(Optional.of(session));
+
+        service.autoTransitionToClose(session.getId());
 
         verify(sessionRepository, never()).save(any());
         verify(messagingTemplate, never()).convertAndSend(anyString(), any(Object.class));

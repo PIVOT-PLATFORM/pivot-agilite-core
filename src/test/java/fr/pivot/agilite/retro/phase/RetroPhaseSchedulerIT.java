@@ -155,10 +155,50 @@ class RetroPhaseSchedulerIT {
         assertThat(phase).isEqualTo(RetroPhase.VOTE);
     }
 
+    /**
+     * Given a session created with a 1-second action timer and already in the ACTION phase, when
+     * that timer elapses, then the scheduler auto-closes it without any manual action (US20.1.2c).
+     * Entering ACTION via {@code advanceToAction} stamps {@code updatedAt} with the transition
+     * timestamp — exactly the marker {@code RetroPhaseScheduler#checkActionTimers} relies on.
+     */
+    @Test
+    void actionTimerExpiry_autoTransitionsToClosed() throws Exception {
+        String sessionId = createSessionWithActionTimer(1);
+        advanceToAction(sessionId);
+
+        await().atMost(Duration.ofSeconds(5)).untilAsserted(() -> {
+            RetroPhase phase = sessionRepository.findById(UUID.fromString(sessionId)).orElseThrow().getCurrentPhase();
+            assertThat(phase).isEqualTo(RetroPhase.CLOSED);
+        });
+    }
+
+    /**
+     * Given a session created with NO configured action timer (manual closure only) and already
+     * in the ACTION phase, when time passes, then the scheduler never auto-closes it — it stays
+     * in ACTION.
+     */
+    @Test
+    void noConfiguredActionTimer_neverAutoClosesSession() throws Exception {
+        String sessionId = createSessionWithoutTimer();
+        advanceToAction(sessionId);
+
+        Thread.sleep(1500);
+
+        RetroPhase phase = sessionRepository.findById(UUID.fromString(sessionId)).orElseThrow().getCurrentPhase();
+        assertThat(phase).isEqualTo(RetroPhase.ACTION);
+    }
+
     /** Force-advances a session directly to VOTE, refreshing {@code updatedAt} via the entity's own {@code @PreUpdate}. */
     private void advanceToVote(final String sessionId) {
         RetroSession session = sessionRepository.findById(UUID.fromString(sessionId)).orElseThrow();
         session.setCurrentPhase(RetroPhase.VOTE);
+        sessionRepository.save(session);
+    }
+
+    /** Force-advances a session directly to ACTION, refreshing {@code updatedAt} via the entity's own {@code @PreUpdate}. */
+    private void advanceToAction(final String sessionId) {
+        RetroSession session = sessionRepository.findById(UUID.fromString(sessionId)).orElseThrow();
+        session.setCurrentPhase(RetroPhase.ACTION);
         sessionRepository.save(session);
     }
 
@@ -170,6 +210,20 @@ class RetroPhaseSchedulerIT {
                                 .content("""
                                         {"title":"Timed Retro","format":"START_STOP_CONTINUE","teamId":%d,
                                          "voteTimerSeconds":%d}
+                                        """.formatted(teamId, timerSeconds)))
+                .andExpect(status().isCreated())
+                .andReturn();
+        return objectMapper.readTree(result.getResponse().getContentAsString()).get("id").asText();
+    }
+
+    private String createSessionWithActionTimer(final int timerSeconds) throws Exception {
+        MvcResult result = mockMvc.perform(
+                        post("/retro/sessions")
+                                .header("Authorization", "Bearer " + facilitatorToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {"title":"Timed Retro","format":"START_STOP_CONTINUE","teamId":%d,
+                                         "actionTimerSeconds":%d}
                                         """.formatted(teamId, timerSeconds)))
                 .andExpect(status().isCreated())
                 .andReturn();
