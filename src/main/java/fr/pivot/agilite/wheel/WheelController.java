@@ -3,7 +3,10 @@ package fr.pivot.agilite.wheel;
 import fr.pivot.agilite.context.RequestPrincipal;
 import fr.pivot.agilite.wheel.dto.CreateWheelRequest;
 import fr.pivot.agilite.wheel.dto.UpdateWheelRequest;
+import fr.pivot.agilite.wheel.dto.WheelDrawResponse;
 import fr.pivot.agilite.wheel.dto.WheelResponse;
+import fr.pivot.agilite.wheel.dto.WheelSpinRequest;
+import fr.pivot.agilite.wheel.dto.WheelSpinResponse;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
 import org.springframework.http.HttpStatus;
@@ -23,7 +26,8 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * REST controller exposing wheel operations under {@code /wheels} (US14.1.1).
+ * REST controller exposing wheel operations under {@code /wheels} (US14.1.1, extended by
+ * US14.2.1 with the weighted anti-repeat draw).
  *
  * <p>All endpoints require a valid {@code Authorization: Bearer <token>} header, resolved into
  * a {@link RequestPrincipal} by {@link fr.pivot.agilite.context.RequestPrincipalResolver}.
@@ -37,14 +41,17 @@ import java.util.UUID;
 public class WheelController {
 
     private final WheelService wheelService;
+    private final WheelDrawService wheelDrawService;
 
     /**
-     * Creates the controller with its required service dependency.
+     * Creates the controller with its required service dependencies.
      *
-     * @param wheelService the wheel business logic service
+     * @param wheelService     the wheel CRUD business logic service (US14.1.1)
+     * @param wheelDrawService the weighted anti-repeat draw business logic service (US14.2.1)
      */
-    public WheelController(final WheelService wheelService) {
+    public WheelController(final WheelService wheelService, final WheelDrawService wheelDrawService) {
         this.wheelService = wheelService;
+        this.wheelDrawService = wheelDrawService;
     }
 
     /**
@@ -121,5 +128,40 @@ public class WheelController {
             @PathVariable final UUID wheelId,
             final RequestPrincipal principal) {
         wheelService.delete(wheelId, principal.userId(), principal.tenantId());
+    }
+
+    /**
+     * Performs a weighted, anti-repeat draw on a wheel (US14.2.1).
+     *
+     * @param wheelId   the wheel UUID from the path
+     * @param request   the spin request — optional {@code antiRepeatMode}; the body itself may be
+     *                  entirely omitted, in which case {@code reduced_weight} is used
+     * @param principal the resolved caller identity
+     * @return the draw result with HTTP 201 Created
+     */
+    @PostMapping("/{wheelId}/spin")
+    @ResponseStatus(HttpStatus.CREATED)
+    public WheelSpinResponse spin(
+            @PathVariable final UUID wheelId,
+            @RequestBody(required = false) final WheelSpinRequest request,
+            final RequestPrincipal principal) {
+        String rawAntiRepeatMode = request != null ? request.antiRepeatMode() : null;
+        return wheelDrawService.spin(wheelId, rawAntiRepeatMode, principal.userId(), principal.tenantId());
+    }
+
+    /**
+     * Lists the most recent draws of a wheel, most recent first (US14.2.1).
+     *
+     * @param wheelId   the wheel UUID from the path
+     * @param limit     the maximum number of draws to return (1-100, default 20)
+     * @param principal the resolved caller identity
+     * @return the most recent draws, most recent first
+     */
+    @GetMapping("/{wheelId}/draws")
+    public List<WheelDrawResponse> draws(
+            @PathVariable final UUID wheelId,
+            @RequestParam(required = false) final String limit,
+            final RequestPrincipal principal) {
+        return wheelDrawService.listDraws(wheelId, limit, principal.userId(), principal.tenantId());
     }
 }
