@@ -77,7 +77,7 @@ public class PokerTicketService {
     @Transactional
     public TicketResponse create(
             final UUID roomId, final String title, final Long callerUserId, final Long tenantId) {
-        PokerRoom room = requireFacilitator(roomId, callerUserId, tenantId);
+        requireFacilitator(roomId, callerUserId, tenantId);
         if (ticketRepository.existsByRoomIdAndStatus(roomId, PokerTicketStatus.VOTING)) {
             throw new ActiveTicketExistsException(roomId);
         }
