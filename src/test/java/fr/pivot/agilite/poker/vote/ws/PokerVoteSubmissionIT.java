@@ -159,11 +159,14 @@ class PokerVoteSubmissionIT {
         assertMaskedVoteCast(participantPayload, ticketId, 1, 2);
 
         // Change of vote before reveal: votedCount stays at 1 (same participant), never leaking
-        // either the old or the new value.
+        // either the old or the new value. assertMaskedVoteCast already proves this structurally
+        // (asserts the absence of the "value" JSON key on the raw payload) — a further raw
+        // substring check on the literal card values ("13"/"89") was flaky: roomId/ticketId are
+        // random hex UUIDs, which can coincidentally contain either digit sequence, failing this
+        // assertion with no relation to any actual value leak.
         sendVote(participantWs, roomId, participantAccessToken, ticketId, "89");
         String changedPayload = poll(facilitatorRaw);
         assertMaskedVoteCast(changedPayload, ticketId, 1, 2);
-        assertThat(changedPayload).doesNotContain("13").doesNotContain("89");
     }
 
     /**
