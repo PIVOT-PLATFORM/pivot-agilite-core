@@ -166,6 +166,29 @@ public class WheelService {
     }
 
     /**
+     * Checks whether a caller may access a wheel, without throwing — reuses exactly the same
+     * existence/tenant/team-membership resolution as {@link #resolveAccessibleWheel}, exposed as
+     * a boolean rather than an exception-or-value for callers that need a silent yes/no decision
+     * instead of an HTTP-flavored exception.
+     *
+     * <p>Consumed by {@code WheelChannelInterceptor} (US14.3.1) to authorize a STOMP
+     * {@code SUBSCRIBE} to a wheel's broadcast topic — the exact same authorization boundary as
+     * this class's own REST endpoints (and {@code WheelDrawService}'s {@code spin}/{@code
+     * listDraws}), never a divergent or duplicated check.
+     *
+     * @param wheelId      the wheel UUID
+     * @param callerUserId the calling user's {@code public.users.id}
+     * @param tenantId     the calling tenant's {@code public.tenants.id}
+     * @return {@code true} if the wheel exists, belongs to this tenant, and the caller is a
+     *     member of its owning team; {@code false} otherwise
+     */
+    public boolean isAccessibleTo(final UUID wheelId, final Long callerUserId, final Long tenantId) {
+        return wheelRepository.findByIdAndTenantId(wheelId, tenantId)
+                .filter(wheel -> teamMemberRepository.existsByTeamIdAndUserId(wheel.getTeamId(), callerUserId))
+                .isPresent();
+    }
+
+    /**
      * Resolves a wheel by id and tenant, then verifies the caller is a member of its team.
      *
      * @param wheelId      the wheel UUID
