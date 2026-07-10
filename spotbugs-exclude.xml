@@ -106,6 +106,12 @@
                  own SimpMessagingTemplate field already falls under the fr.pivot.agilite.wheel
                  exclusion above. -->
             <Package name="fr.pivot.agilite.wheel.ws"/>
+            <!-- US20.3.1 — retro actions: RetroActionService stores a constructor-injected
+                 singleton bean (SimpMessagingTemplate) — same established pattern as
+                 fr.pivot.agilite.retro.card/fr.pivot.agilite.poker.ticket above; RetroAction is a
+                 JPA entity (mutable getters/setters required by Hibernate). -->
+            <Package name="fr.pivot.agilite.retro.action"/>
+            <Package name="fr.pivot.agilite.retro.action.dto"/>
         </Or>
     </Match>
 
