@@ -98,4 +98,17 @@ public class PokerTicket {
     public Instant getRevealedAt() {
         return revealedAt;
     }
+
+    /**
+     * Reveals this ticket (US09.2.2): transitions {@link #status} to {@link
+     * PokerTicketStatus#REVEALED} and sets {@link #revealedAt}. A one-time transition — the
+     * caller (see {@code PokerTicketService#reveal}) must guard against calling this on a ticket
+     * that is already {@link PokerTicketStatus#REVEALED}.
+     *
+     * @param revealedAt the revelation timestamp
+     */
+    public void reveal(final Instant revealedAt) {
+        this.status = PokerTicketStatus.REVEALED;
+        this.revealedAt = revealedAt;
+    }
 }
