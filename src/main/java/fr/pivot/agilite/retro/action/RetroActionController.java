@@ -19,14 +19,15 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * REST controller exposing retrospective action operations (US20.3.1).
+ * REST controller exposing retrospective action operations (US20.3.1, US20.3.2).
  *
  * <p>Full paths (including the application context): {@code /api/agilite/retro/sessions/{id}/
  * actions}, {@code /api/agilite/retro/actions/{actionId}}, {@code /api/agilite/retro/teams/
- * {teamId}/actions}. Each spans a different resource root ({@code retro/sessions}, {@code
- * retro/actions}, {@code retro/teams}), unlike {@code RetroPhaseController}/{@code
- * RetroSessionController} which each map a single shared prefix — so no class-level {@code
- * @RequestMapping} is used here, and every method carries its own full path instead.
+ * {teamId}/actions}, {@code /api/agilite/retro/teams/{teamId}/retro/pending-actions}. Each spans
+ * a different resource root ({@code retro/sessions}, {@code retro/actions}, {@code retro/teams}),
+ * unlike {@code RetroPhaseController}/{@code RetroSessionController} which each map a single
+ * shared prefix — so no class-level {@code @RequestMapping} is used here, and every method
+ * carries its own full path instead.
  *
  * <p>Every endpoint requires a valid {@code Authorization: Bearer <token>} header, resolved into a
  * {@link RequestPrincipal} exactly like {@code RetroSessionController}/{@code
@@ -99,5 +100,24 @@ public class RetroActionController {
             @RequestParam(required = false) final String sort,
             final RequestPrincipal principal) {
         return actionService.listForTeam(teamId, status, sort, principal.userId(), principal.tenantId());
+    }
+
+    /**
+     * Lists a team's still-open actions ({@code A_FAIRE}/{@code EN_COURS}) carried over from any
+     * prior session — including sessions already {@link
+     * fr.pivot.agilite.retro.session.RetroPhase#CLOSED} — sorted by ascending due date, actions
+     * without a due date last (US20.3.2: reviewing the previous retro's pending actions at the
+     * start of a new one).
+     *
+     * @param teamId    the team's {@code public.teams.id} from the path
+     * @param principal the resolved caller identity
+     * @return the team's pending actions, sorted by ascending due date (nulls last); an empty
+     *         list if none, never a 404 for that case
+     */
+    @GetMapping("/retro/teams/{teamId}/retro/pending-actions")
+    public List<RetroActionResponse> pendingActions(
+            @PathVariable final Long teamId,
+            final RequestPrincipal principal) {
+        return actionService.listPendingForTeam(teamId, principal.userId(), principal.tenantId());
     }
 }
