@@ -96,7 +96,10 @@ public class RetroSessionAccessService {
                 participant.facilitator(),
                 RetroSessionDestinations.roomTopic(sessionId),
                 participant.facilitator() ? RetroSessionDestinations.facilitatorTopic(sessionId) : null,
-                RetroSessionDestinations.APP_ROOM_PREFIX + sessionId + "/cards");
+                RetroSessionDestinations.APP_ROOM_PREFIX + sessionId + "/cards",
+                RetroSessionDestinations.APP_ROOM_PREFIX + sessionId + "/votes",
+                RetroSessionDestinations.APP_ROOM_PREFIX + sessionId + "/votes/uncast",
+                RetroSessionDestinations.APP_ROOM_PREFIX + sessionId + "/votes/balance");
     }
 
     /**
