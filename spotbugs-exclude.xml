@@ -81,6 +81,13 @@
                  existing RoomResponse.cardValues rationale above: SpotBugs cannot prove
                  immutability statically from the Map<String, List<...>> field type alone. -->
             <Package name="fr.pivot.agilite.retro.phase.dto"/>
+            <!-- US20.1.2b — retro dot-voting business logic: RetroVoteService/RetroVoteWsController
+                 store constructor-injected singleton beans (repositories, RetroAccessGrantService,
+                 SimpMessagingTemplate); RetroVote/RetroVoteBalance are JPA entities (mutable
+                 getters/setters required by Hibernate). -->
+            <Package name="fr.pivot.agilite.retro.vote"/>
+            <Package name="fr.pivot.agilite.retro.vote.dto"/>
+            <Package name="fr.pivot.agilite.retro.vote.ws"/>
         </Or>
     </Match>
 
