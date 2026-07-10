@@ -79,14 +79,12 @@ jobs:
 
       - name: Run tests with coverage
         env:
-          # US14.1.1: resolves fr.pivot:pivot-core-starter — see the note on the
+          # US14.1.1/US20.1.1: resolves fr.pivot:pivot-core-starter — see the note on the
           # "Compile + Checkstyle + SpotBugs" step above.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Datasource is provided by Testcontainers (@ServiceConnection) — no static URL needed.
           SPRING_REDIS_HOST: localhost
           SPRING_REDIS_PORT: 6379
-          # US20.1.1 — see "Compile + Checkstyle + SpotBugs" step above for why this is needed.
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: mvn --no-transfer-progress verify -Pcoverage -Dmaven.compiler.release=24
 
       # Compiled classes + coverage shared with the sonar job (no recompile downstream).
