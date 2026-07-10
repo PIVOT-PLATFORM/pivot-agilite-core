@@ -24,9 +24,10 @@ import java.util.Map;
  * RetroCustomFormatIdNotAllowedException}), planning poker room lookup failures (US09.1.1, {@link
  * RoomNotFoundException}) and join-by-code failures (US09.1.2, {@link
  * InviteCodeNotFoundException}), wheel/team domain exceptions (US14.1.1, {@link
- * WheelNotFoundException}, {@link TeamNotFoundException}, {@link WheelValidationException}), as
- * well as Spring MVC/Bean Validation failures ({@link MethodArgumentNotValidException}, {@link
- * ConstraintViolationException}).
+ * WheelNotFoundException}, {@link TeamNotFoundException}, {@link WheelValidationException}), the
+ * US14.2.1 weighted anti-repeat draw's defensive empty-wheel guard ({@link
+ * WheelEmptyException}), as well as Spring MVC/Bean Validation failures ({@link
+ * MethodArgumentNotValidException}, {@link ConstraintViolationException}).
  */
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -275,6 +276,23 @@ public class GlobalExceptionHandler {
         problem.setTitle("Validation failed");
         problem.setDetail(ex.getMessage());
         problem.setProperties(Map.of("code", ex.getCode()));
+        return problem;
+    }
+
+    /**
+     * Returns HTTP 409 with a machine-readable {@code EMPTY_WHEEL} code when a {@code spin} is
+     * attempted on a wheel with zero entries (US14.2.1, defensive guard — see
+     * {@link WheelEmptyException}).
+     *
+     * @param ex the thrown exception
+     * @return a 409 problem detail with a {@code code} property
+     */
+    @ExceptionHandler(WheelEmptyException.class)
+    public ProblemDetail handleWheelEmpty(final WheelEmptyException ex) {
+        ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.CONFLICT);
+        problem.setTitle("Wheel is empty");
+        problem.setDetail(ex.getMessage());
+        problem.setProperties(Map.of("code", "EMPTY_WHEEL"));
         return problem;
     }
 

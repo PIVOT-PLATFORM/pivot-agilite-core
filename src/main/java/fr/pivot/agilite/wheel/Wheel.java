@@ -50,8 +50,9 @@ public class Wheel {
 
     /**
      * Marker for the anti-repeat weighted draw (US14.2.1) — the {@link WheelEntry#getId()} last
-     * drawn on this wheel, or {@code null} if no draw has occurred yet. Never written by this
-     * US; always {@code null} here.
+     * drawn on this wheel, or {@code null} if no draw has occurred yet. Written by {@link
+     * WheelDrawService} after each successful {@code spin} (US14.2.1); always {@code null} until
+     * then.
      */
     @Column(name = "last_drawn_entry_id")
     private UUID lastDrawnEntryId;
@@ -175,6 +176,16 @@ public class Wheel {
      */
     public UUID getLastDrawnEntryId() {
         return lastDrawnEntryId;
+    }
+
+    /**
+     * Records the entry just drawn by a weighted {@code spin} (US14.2.1) as this wheel's
+     * anti-repeat marker, consumed by the next draw.
+     *
+     * @param entryId the drawn entry's identifier
+     */
+    public void setLastDrawnEntryId(final UUID entryId) {
+        this.lastDrawnEntryId = entryId;
     }
 
     /**
