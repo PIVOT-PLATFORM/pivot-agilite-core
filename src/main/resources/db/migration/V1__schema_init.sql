@@ -5,6 +5,36 @@
 
 CREATE SCHEMA IF NOT EXISTS agilite;
 
+-- US20.2.1: tenant-owned custom retro formats — the 4 system formats (RetroFormat enum, minus
+-- CUSTOM) are static in-code data (RetroFormatCatalog), never rows here (structural immutability
+-- guarantee: no route of any kind exists to create/alter/delete a system format). Created before
+-- agilite.retro_sessions below so the latter's custom_format_id FK can reference it inline.
+CREATE TABLE IF NOT EXISTS agilite.retro_formats (
+    id                  UUID         NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
+    tenant_id           BIGINT       NOT NULL REFERENCES public.tenants(id),
+    label               VARCHAR(60)  NOT NULL,
+    created_by_user_id  BIGINT       NOT NULL REFERENCES public.users(id),
+    created_at          TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_retro_formats_tenant_id ON agilite.retro_formats(tenant_id);
+
+-- US20.2.1: columns of a custom format. `position` doubles as the JPA @OrderColumn Hibernate
+-- uses to persist/restore display order (RetroCustomFormat#columns), and as half of the
+-- composite primary key — no separate synthetic id needed since a column has no identity outside
+-- its owning format. `column_key` uniqueness within a format is a DB constraint, not merely
+-- app-level (RetroFormatService generates/disambiguates it, but the DB is the final guarantee).
+CREATE TABLE IF NOT EXISTS agilite.retro_format_columns (
+    format_id    UUID         NOT NULL REFERENCES agilite.retro_formats(id) ON DELETE CASCADE,
+    position     INTEGER      NOT NULL,
+    column_key   VARCHAR(50)  NOT NULL,
+    label        VARCHAR(40)  NOT NULL,
+    color        VARCHAR(20),
+    description  VARCHAR(200),
+    icon         VARCHAR(50),
+    PRIMARY KEY (format_id, position),
+    CONSTRAINT uq_retro_format_columns_key UNIQUE (format_id, column_key)
+);
+
 -- US20.1.1: retro_sessions
 CREATE TABLE IF NOT EXISTS agilite.retro_sessions (
     id                          UUID         NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
@@ -12,6 +42,9 @@ CREATE TABLE IF NOT EXISTS agilite.retro_sessions (
     team_id                     BIGINT       NOT NULL REFERENCES public.teams(id),
     title                       VARCHAR(100) NOT NULL,
     format                      VARCHAR(30)  NOT NULL,
+    -- US20.2.1: populated iff format = 'CUSTOM' (RetroSessionService cross-field validation) —
+    -- nullable, no default, never a separate ALTER TABLE (single-file convention).
+    custom_format_id            UUID         REFERENCES agilite.retro_formats(id),
     sprint_ref                  VARCHAR(100),
     facilitator_user_id         BIGINT       NOT NULL REFERENCES public.users(id),
     join_code                   VARCHAR(6)   NOT NULL UNIQUE,
