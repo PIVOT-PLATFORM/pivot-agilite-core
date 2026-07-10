@@ -99,6 +99,13 @@
             <Package name="fr.pivot.agilite.poker.vote"/>
             <Package name="fr.pivot.agilite.poker.vote.dto"/>
             <Package name="fr.pivot.agilite.poker.vote.ws"/>
+            <!-- US14.3.1 — wheel WebSocket subscription isolation: WheelChannelInterceptor
+                 stores constructor-injected singleton beans (AuthenticatedPrincipalResolver,
+                 WheelService) plus a @Lazy-injected SimpMessagingTemplate (same rationale as
+                 fr.pivot.agilite.poker.ws/fr.pivot.agilite.retro.ws above); WheelDrawService's
+                 own SimpMessagingTemplate field already falls under the fr.pivot.agilite.wheel
+                 exclusion above. -->
+            <Package name="fr.pivot.agilite.wheel.ws"/>
         </Or>
     </Match>
 
