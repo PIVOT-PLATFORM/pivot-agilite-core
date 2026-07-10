@@ -55,7 +55,13 @@ CREATE TABLE IF NOT EXISTS agilite.retro_sessions (
     vote_count_per_participant  INTEGER      NOT NULL DEFAULT 3,
     expires_at                  TIMESTAMPTZ  NOT NULL,
     created_at                  TIMESTAMPTZ  NOT NULL DEFAULT now(),
-    updated_at                  TIMESTAMPTZ  NOT NULL DEFAULT now()
+    updated_at                  TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    -- US20.2.1: same structural-guarantee approach as chk_retro_cards_anonymous_no_author below
+    -- — the format/customFormatId invariant is also enforced at the DB layer, not only in
+    -- RetroSessionService, so a future direct insert/update (admin tool, bulk fix, bug in a
+    -- later US) can never silently create an inconsistent row.
+    CONSTRAINT chk_retro_sessions_custom_format_id
+        CHECK ((format = 'CUSTOM') = (custom_format_id IS NOT NULL))
 );
 CREATE INDEX IF NOT EXISTS idx_retro_sessions_tenant_id ON agilite.retro_sessions(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_retro_sessions_team_id   ON agilite.retro_sessions(team_id);

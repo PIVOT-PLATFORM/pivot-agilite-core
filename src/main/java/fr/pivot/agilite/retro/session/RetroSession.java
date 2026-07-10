@@ -50,9 +50,10 @@ public class RetroSession {
 
     /**
      * Tenant-owned custom format reference (US20.2.1); populated iff {@link #format} is {@link
-     * RetroFormat#CUSTOM}, {@code null} otherwise — enforced by {@code RetroSessionService}'s
-     * cross-field validation, not by a DB constraint (a nullable FK alone cannot express "not
-     * null iff format = CUSTOM").
+     * RetroFormat#CUSTOM}, {@code null} otherwise — enforced both by {@code
+     * RetroSessionService}'s cross-field validation (for the 400/404 error codes) and, as a
+     * structural guarantee, by the {@code chk_retro_sessions_custom_format_id} {@code CHECK}
+     * constraint in {@code V1__schema_init.sql}.
      */
     @Column(name = "custom_format_id")
     private UUID customFormatId;

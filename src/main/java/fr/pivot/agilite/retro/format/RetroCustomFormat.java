@@ -12,6 +12,8 @@ import jakarta.persistence.OrderColumn;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
+import org.hibernate.annotations.Fetch;
+import org.hibernate.annotations.FetchMode;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -55,7 +57,9 @@ public class RetroCustomFormat {
     /**
      * The format's columns, in display order. {@code @OrderColumn} persists the list index
      * directly (the {@code position} column), so retrieval order is guaranteed without relying
-     * on insertion order or timestamps.
+     * on insertion order or timestamps. {@code @Fetch(SUBSELECT)} avoids an N+1 query pattern
+     * when {@code GET /retro/formats} loads a tenant's multiple custom formats: one extra query
+     * for all their columns combined, instead of one per format.
      */
     @ElementCollection
     @CollectionTable(
@@ -65,6 +69,7 @@ public class RetroCustomFormat {
             uniqueConstraints = @UniqueConstraint(
                     name = "uq_retro_format_columns_key", columnNames = {"format_id", "column_key"}))
     @OrderColumn(name = "position")
+    @Fetch(FetchMode.SUBSELECT)
     private List<RetroFormatColumn> columns = new ArrayList<>();
 
     /** No-arg constructor required by JPA. */

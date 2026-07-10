@@ -34,8 +34,7 @@ public class RetroFormatService {
     private static final String FALLBACK_SLUG = "COLUMN";
 
     private static final Pattern NON_ALPHANUMERIC = Pattern.compile("[^A-Z0-9]+");
-    private static final Pattern LEADING_UNDERSCORES = Pattern.compile("^_+");
-    private static final Pattern TRAILING_UNDERSCORES = Pattern.compile("_+$");
+    private static final Pattern BOUNDARY_UNDERSCORES = Pattern.compile("^_+|_+$");
 
     private final RetroCustomFormatRepository customFormatRepository;
 
@@ -120,8 +119,7 @@ public class RetroFormatService {
     static String slugify(final String label) {
         String upper = label.toUpperCase(Locale.ROOT);
         String slug = NON_ALPHANUMERIC.matcher(upper).replaceAll("_");
-        slug = LEADING_UNDERSCORES.matcher(slug).replaceAll("");
-        slug = TRAILING_UNDERSCORES.matcher(slug).replaceAll("");
+        slug = BOUNDARY_UNDERSCORES.matcher(slug).replaceAll("");
         return slug.isEmpty() ? FALLBACK_SLUG : slug;
     }
 

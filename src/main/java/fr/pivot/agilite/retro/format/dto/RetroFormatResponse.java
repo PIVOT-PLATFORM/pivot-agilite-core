@@ -6,6 +6,7 @@ import fr.pivot.agilite.retro.format.RetroFormatColumn;
 import fr.pivot.agilite.retro.session.RetroFormat;
 
 import java.util.List;
+import java.util.Objects;
 
 /**
  * A single entry of the retrospective format catalogue — one of the 4 predefined system formats,
@@ -41,10 +42,15 @@ public record RetroFormatResponse(
     /**
      * Builds the response for a tenant-owned custom format entity.
      *
-     * @param format the persisted custom format
+     * @param format the persisted custom format — must already have an id (i.e. have been
+     *               through a real {@code save()}); both current call sites (post-creation,
+     *               post-repository-read) guarantee this
      * @return a populated response record with {@code system = false}
+     * @throws NullPointerException if {@code format} has not yet been persisted (no id assigned)
+     *     — a deliberately loud failure rather than silently returning a null/garbage key
      */
     public static RetroFormatResponse from(final RetroCustomFormat format) {
+        Objects.requireNonNull(format.getId(), "format.getId() — cannot build a response for an unsaved format");
         List<RetroFormatColumnResponse> columns = format.getColumns().stream()
                 .map(RetroFormatResponse::toColumnResponse)
                 .toList();
