@@ -3,15 +3,13 @@ name: Security
 # Stub — délègue au reusable workflow d'org (source unique).
 # Voir PIVOT-PLATFORM/.github/.github/workflows/security.yml
 #
-# Réf épinglée par SHA (contrôle Plumber actionsMustBePinnedByCommitSha). Ce SHA pointe la
-# branche chore/reusable-security-workflow (.github#13) pour valider le pilote avant merge ;
-# à re-pinner sur le SHA de main une fois #13 mergée.
-# SHA mis à jour vers ed6c151 : le commit précédent (6bad314) déclarait `permissions:
-# read-all` au niveau workflow dans le reusable, ce qui dépasse le plafond accordé
-# ci-dessous par ce stub et causait un startup_failure ("workflow is requesting
-# 'artifact-metadata: read, ... id-token: read', but is only allowed ..."). Le
-# reusable déclare désormais le même plafond minimal (contents/actions: read,
-# security-events: write) que ce stub accorde.
+# Réf épinglée par SHA (contrôle Plumber actionsMustBePinnedByCommitSha) sur le commit de
+# merge de .github#13 sur main (6fd747d, squash de la Vague 1) — le pilote a été validé
+# vert de bout en bout sur les SHA de branche avant merge.
+# Rappel du piège corrigé pendant le pilote : un reusable déclarant au niveau workflow des
+# permissions au-delà du plafond accordé ci-dessous par ce stub provoque un startup_failure
+# ("workflow is requesting ..., but is only allowed ..."). Le reusable déclare le même
+# plafond minimal (contents/actions: read, security-events: write) que ce stub accorde.
 # Secrets passés explicitement (pas de `secrets: inherit` — interdit par le contrôle Plumber
 # reusableWorkflowsMustNotInheritSecrets).
 
@@ -31,7 +29,7 @@ permissions:
 
 jobs:
   security:
-    uses: PIVOT-PLATFORM/.github/.github/workflows/security.yml@ed6c151cb05785d01ad043d4f80c916a24c2eace
+    uses: PIVOT-PLATFORM/.github/.github/workflows/security.yml@6fd747da27199b4db05e6067fdb24ad6fbb8baea # main (Vague 1, .github#13)
     # Repo -core (Java) : les défauts du reusable conviennent
     # (codeql-language=java, build Maven, semgrep Java/Spring, paths src/main/java src/test/java).
     # Aucun input à surcharger.
