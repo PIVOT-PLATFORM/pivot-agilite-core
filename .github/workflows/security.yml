@@ -3,8 +3,11 @@ name: Security
 # Stub — délègue au reusable workflow d'org (source unique).
 # Voir PIVOT-PLATFORM/.github/.github/workflows/security.yml
 #
-# NB : @v1 doit exister côté repo .github (tag mobile). Avant la première release du reusable,
-# référencer temporairement @main. Pinning strict (SHA) recommandé une fois stabilisé.
+# Réf épinglée par SHA (contrôle Plumber actionsMustBePinnedByCommitSha). Ce SHA pointe la
+# branche chore/reusable-security-workflow (.github#13) pour valider le pilote avant merge ;
+# à re-pinner sur le SHA de main une fois #13 mergée.
+# Secrets passés explicitement (pas de `secrets: inherit` — interdit par le contrôle Plumber
+# reusableWorkflowsMustNotInheritSecrets).
 
 on:
   push:
@@ -17,8 +20,12 @@ permissions: read-all
 
 jobs:
   security:
-    uses: PIVOT-PLATFORM/.github/.github/workflows/security.yml@v1
-    secrets: inherit
+    uses: PIVOT-PLATFORM/.github/.github/workflows/security.yml@6bad31429a8baeb0b0578639713e09304ded905b
     # Repo -core (Java) : les défauts du reusable conviennent
     # (codeql-language=java, build Maven, semgrep Java/Spring, paths src/main/java src/test/java).
-    # Rien à surcharger ici.
+    # Aucun input à surcharger.
+    secrets:
+      GITLEAKS_LICENCE_KEY: ${{ secrets.GITLEAKS_LICENCE_KEY }}
+      SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
+      PLUMBER_METADATA_TOKEN: ${{ secrets.PLUMBER_METADATA_TOKEN }}
+      PLUMBER_TOKEN: ${{ secrets.PLUMBER_TOKEN }}
