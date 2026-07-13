@@ -16,7 +16,12 @@ on:
   schedule:
     - cron: '0 6 * * 1'   # Lundi 6h UTC
 
-permissions: read-all
+# Plafond de permissions de l'appelant : un reusable ne peut pas *dépasser* ce que l'appelant
+# accorde. Union exacte requise par les jobs du reusable (gitleaks/codeql/semgrep/plumber).
+permissions:
+  contents: read
+  actions: read
+  security-events: write
 
 jobs:
   security:
